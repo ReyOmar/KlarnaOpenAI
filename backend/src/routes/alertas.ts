@@ -27,4 +27,18 @@ router.get('/', async (_req: Request, res: Response): Promise<void> => {
   }
 });
 
+router.patch('/:id/resolver', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const alerta = await prisma.alerta.update({
+      where: { id },
+      data: { estado: 'RESUELTA' },
+    });
+    res.json(alerta);
+  } catch (error) {
+    console.error('Error al resolver alerta:', error);
+    res.status(500).json({ error: 'Error al resolver la alerta' });
+  }
+});
+
 export default router;

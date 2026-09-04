@@ -111,14 +111,41 @@ export default function Chat() {
       {/* Header */}
       <header className="chat-header">
         <div className="chat-header-brand">
-          <div className="chat-header-logo">PM</div>
+          <div className="chat-header-logo">KL</div>
           <div>
-            <div className="chat-header-title">Prompt Maestro</div>
+            <div className="chat-header-title">Klarna</div>
           </div>
         </div>
-        <div className="chat-header-status">
-          <span className="status-dot"></span>
-          Asistente en línea
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div className="chat-header-status">
+            <span className="status-dot"></span>
+            Asistente en línea
+          </div>
+          <a
+            href="/admin"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '6px 12px',
+              borderRadius: '8px',
+              background: 'rgba(168, 85, 247, 0.12)',
+              border: '1px solid rgba(168, 85, 247, 0.3)',
+              color: '#d8b4fe',
+              fontSize: '12px',
+              fontWeight: 500,
+              textDecoration: 'none',
+              transition: 'all 0.15s',
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <rect x="1" y="1" width="6" height="6" rx="1" stroke="currentColor" strokeWidth="1.2" />
+              <rect x="9" y="1" width="6" height="6" rx="1" stroke="currentColor" strokeWidth="1.2" />
+              <rect x="1" y="9" width="6" height="6" rx="1" stroke="currentColor" strokeWidth="1.2" />
+              <rect x="9" y="9" width="6" height="6" rx="1" stroke="currentColor" strokeWidth="1.2" />
+            </svg>
+            Admin Dashboard
+          </a>
         </div>
       </header>
 
@@ -150,19 +177,17 @@ export default function Chat() {
             {messages.map((msg) => (
               <div
                 key={msg.id}
-                className={`message-wrapper ${
-                  msg.remitente === 'USUARIO'
+                className={`message-wrapper ${msg.remitente === 'USUARIO'
                     ? 'user'
                     : msg.remitente === 'AGENTE_HUMANO'
-                    ? 'agent'
-                    : 'assistant'
-                }`}
+                      ? 'agent'
+                      : 'assistant'
+                  }`}
               >
                 {msg.remitente !== 'USUARIO' && (
                   <div
-                    className={`message-avatar ${
-                      msg.remitente === 'AGENTE_HUMANO' ? 'agent' : 'assistant'
-                    }`}
+                    className={`message-avatar ${msg.remitente === 'AGENTE_HUMANO' ? 'agent' : 'assistant'
+                      }`}
                   >
                     {msg.remitente === 'AGENTE_HUMANO' ? (
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -178,13 +203,12 @@ export default function Chat() {
                 )}
                 <div>
                   <div
-                    className={`message-bubble ${
-                      msg.remitente === 'USUARIO'
+                    className={`message-bubble ${msg.remitente === 'USUARIO'
                         ? 'user'
                         : msg.remitente === 'AGENTE_HUMANO'
-                        ? 'agent'
-                        : 'assistant'
-                    }`}
+                          ? 'agent'
+                          : 'assistant'
+                      }`}
                   >
                     {msg.remitente === 'AGENTE_HUMANO' && (
                       <div className="agent-label">

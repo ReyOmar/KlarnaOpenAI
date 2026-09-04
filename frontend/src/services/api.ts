@@ -90,6 +90,12 @@ export function obtenerAlertas(): Promise<Alerta[]> {
   return fetchJSON('/alertas');
 }
 
+export function resolverAlerta(id: number): Promise<Alerta> {
+  return fetchJSON(`/alertas/${id}/resolver`, {
+    method: 'PATCH',
+  });
+}
+
 // ─── Handoffs ───────────────────────────────────────────
 
 export type Handoff = {

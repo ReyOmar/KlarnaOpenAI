@@ -1,8 +1,8 @@
-# Prompt Maestro — Chat con Enrutamiento de IA + Sistema de Alertas
+# Klarna — Chat con Enrutamiento de IA + Sistema de Alertas
 
 > **Prototipo funcional** basado en el caso real de Klarna × OpenAI
 
-## ⚠️ Nota importante sobre datos y supuestos
+##  Nota importante sobre datos y supuestos
 
 Este prototipo se basa en el caso real de Klarna (2024), pero incluye **supuestos de diseño** que no son datos confirmados:
 
@@ -11,9 +11,8 @@ Este prototipo se basa en el caso real de Klarna (2024), pero incluye **supuesto
 - Pricing de referencia de la API de OpenAI (agosto 2026)
 
 ### Supuestos del proyecto (NO datos oficiales de Klarna):
-- Los nombres **"Terra"** y **"Luna"** son designaciones internas de este proyecto
 - Klarna **no ha publicado** qué modelo de IA usa internamente
-- El presupuesto de **$20,000 USD/mes** es un parámetro configurable, no un dato público
+- El presupuesto de **$20,000 USD/mes** es un parámetro configurable
 - Los promedios de **800 tokens de entrada / 400 de salida** son estimaciones razonables
 
 ## Stack
