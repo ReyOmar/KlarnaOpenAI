@@ -1,0 +1,172 @@
+// Prompt Maestro — Prisma Schema
+// Modelo de datos basado en la sección 6 del spec
+// NOTA: Los nombres "Terra" y "Luna" son decisiones de diseño de este proyecto,
+// NO datos confirmados por Klarna (ver sección 2 del spec).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Entidades ────────────────────────────────────────────
+
+model Usuario {
+  id             Int            @id @default(autoincrement())
+  nombre         String
+  email          String         @unique
+  fechaRegistro  DateTime       @default(now()) @map("fecha_registro")
+  conversaciones Conversacion[]
+
+  @@map("usuario")
+}
+
+model Conversacion {
+  id          Int       @id @default(autoincrement())
+  idUsuario   Int       @map("id_usuario")
+  fechaInicio DateTime  @default(now()) @map("fecha_inicio")
+  estado      EstadoConversacion @default(ACTIVA)
+  
+  usuario  Usuario   @relation(fields: [idUsuario], references: [id])
+  mensajes Mensaje[]
+  handoff  Handoff?
+
+  @@map("conversacion")
+}
+
+model Mensaje {
+  id              Int       @id @default(autoincrement())
+  idConversacion  Int       @map("id_conversacion")
+  idModelo        Int?      @map("id_modelo")
+  remitente       Remitente
+  contenido       String
+  timestamp       DateTime  @default(now())
+
+  conversacion Conversacion @relation(fields: [idConversacion], references: [id])
+  modelo       ModeloIA?    @relation(fields: [idModelo], references: [id])
+  consumo      ConsumoAPI?
+
+  @@map("mensaje")
+}
+
+model ModeloIA {
+  id               Int     @id @default(autoincrement())
+  nombre           String  @unique
+  nombreApi        String  @map("nombre_api")
+  costoEntradaMusd Float   @map("costo_entrada_musd")  // USD por millón de tokens
+  costoSalidaMusd  Float   @map("costo_salida_musd")   // USD por millón de tokens
+
+  mensajes  Mensaje[]
+  consumos  ConsumoAPI[]
+
+  @@map("modelo_ia")
+}
+
+model ConsumoAPI {
+  id            Int      @id @default(autoincrement())
+  idMensaje     Int      @unique @map("id_mensaje")
+  idModelo      Int      @map("id_modelo")
+  tokensEntrada Int      @map("tokens_entrada")
+  tokensSalida  Int      @map("tokens_salida")
+  costoUsd      Float    @map("costo_usd")
+  fecha         DateTime @default(now())
+
+  mensaje Mensaje  @relation(fields: [idMensaje], references: [id])
+  modelo  ModeloIA @relation(fields: [idModelo], references: [id])
+
+  @@map("consumo_api")
+}
+
+model SaldoDiario {
+  id       Int      @id @default(autoincrement())
+  fecha    DateTime @unique @db.Date
+  saldoCt  Float    @map("saldo_c_t")    // C(t): saldo en USD
+  recargaR Float    @map("recarga_r")    // R: recarga diaria
+  consumoU Float    @map("consumo_u")    // U(t): consumo diario
+
+  alertas Alerta[]
+
+  @@map("saldo_diario")
+}
+
+model Alerta {
+  id        Int          @id @default(autoincrement())
+  idSaldo   Int          @map("id_saldo")
+  tipo      TipoAlerta
+  umbralUsd Float        @map("umbral_usd")
+  estado    EstadoAlerta @default(ACTIVA)
+  fecha     DateTime     @default(now())
+
+  saldo SaldoDiario @relation(fields: [idSaldo], references: [id])
+
+  @@map("alerta")
+}
+
+model Agente {
+  id         Int       @id @default(autoincrement())
+  nombre     String
+  email      String    @unique
+  disponible Boolean   @default(true)
+
+  handoffs Handoff[]
+
+  @@map("agente")
+}
+
+model Handoff {
+  id              Int           @id @default(autoincrement())
+  idConversacion  Int           @unique @map("id_conversacion")
+  idAgente        Int?          @map("id_agente")
+  motivo          String
+  estado          EstadoHandoff @default(PENDIENTE)
+  fecha           DateTime      @default(now())
+
+  conversacion Conversacion @relation(fields: [idConversacion], references: [id])
+  agente       Agente?      @relation(fields: [idAgente], references: [id])
+
+  @@map("handoff")
+}
+
+model Configuracion {
+  id                 Int      @id @default(autoincrement())
+  presupuestoMensual Float    @map("presupuesto_mensual")  // USD
+  umbralAlerta       Float    @map("umbral_alerta")        // USD
+  fechaActualizacion DateTime @default(now()) @map("fecha_actualizacion")
+
+  @@map("configuracion")
+}
+
+// ─── Enums ────────────────────────────────────────────────
+
+enum EstadoConversacion {
+  ACTIVA
+  CERRADA
+  HANDOFF
+}
+
+enum Remitente {
+  USUARIO
+  ASISTENTE
+  AGENTE_HUMANO
+}
+
+enum TipoAlerta {
+  BAJO       // Saldo bajo (< umbral)
+  CRITICO    // Saldo < 25% del umbral
+  AGOTADO    // Saldo = 0
+}
+
+enum EstadoAlerta {
+  ACTIVA
+  RESUELTA
+  IGNORADA
+}
+
+enum EstadoHandoff {
+  PENDIENTE
+  ASIGNADO
+  RESUELTO
+}
