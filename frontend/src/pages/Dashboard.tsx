@@ -266,25 +266,25 @@ export default function Dashboard() {
   // Format chart data from backend history or fallback to sample
   const chartData = historial.length > 0
     ? historial.map((h) => {
-        const d = new Date(h.fecha);
-        return {
-          day: `${d.getDate()} ${d.toLocaleDateString("es-ES", { month: "short" })}`,
-          balance: Math.round(h.saldoCt),
-        };
-      })
+      const d = new Date(h.fecha);
+      return {
+        day: `${d.getDate()} ${d.toLocaleDateString("es-ES", { month: "short" })}`,
+        balance: Math.round(h.saldoCt),
+      };
+    })
     : [
-        { day: "1 Ago", balance: 18200 },
-        { day: "4 Ago", balance: 17340 },
-        { day: "7 Ago", balance: 16800 },
-        { day: "10 Ago", balance: 15920 },
-        { day: "13 Ago", balance: 15100 },
-        { day: "16 Ago", balance: 16400 },
-        { day: "19 Ago", balance: 15700 },
-        { day: "22 Ago", balance: 14500 },
-        { day: "25 Ago", balance: 13800 },
-        { day: "28 Ago", balance: 13100 },
-        { day: "31 Ago", balance: 12406 },
-      ];
+      { day: "1 Ago", balance: 18200 },
+      { day: "4 Ago", balance: 17340 },
+      { day: "7 Ago", balance: 16800 },
+      { day: "10 Ago", balance: 15920 },
+      { day: "13 Ago", balance: 15100 },
+      { day: "16 Ago", balance: 16400 },
+      { day: "19 Ago", balance: 15700 },
+      { day: "22 Ago", balance: 14500 },
+      { day: "25 Ago", balance: 13800 },
+      { day: "28 Ago", balance: 13100 },
+      { day: "31 Ago", balance: 12406 },
+    ];
 
   // Distribution models
   const terraModel = distribucion?.modelos.find((m) => m.nombre.toLowerCase().includes("terra")) || {
@@ -310,33 +310,33 @@ export default function Dashboard() {
 
   const displayAlerts = alertasList.length > 0
     ? alertasList.map((a) => ({
-        id: a.id,
-        date: a.fecha.slice(0, 10),
-        type: a.tipo === "CRITICO" ? "Saldo crítico" : a.tipo === "BAJO" ? "Consumo alto" : "Saldo agotado",
-        threshold: `< $${a.umbralUsd?.toLocaleString() || "15,000"}`,
-        status: a.estado.toLowerCase() as "activa" | "resuelta",
-      }))
+      id: a.id,
+      date: a.fecha.slice(0, 10),
+      type: a.tipo === "CRITICO" ? "Saldo crítico" : a.tipo === "BAJO" ? "Consumo alto" : "Saldo agotado",
+      threshold: `< $${a.umbralUsd?.toLocaleString() || "15,000"}`,
+      status: a.estado.toLowerCase() as "activa" | "resuelta",
+    }))
     : [
-        { id: 1, date: "2026-08-31", type: "Saldo crítico", threshold: "< $15,000", status: "activa" as const },
-        { id: 2, date: "2026-08-28", type: "Consumo alto", threshold: "> $600/día", status: "resuelta" as const },
-        { id: 3, date: "2026-08-21", type: "Saldo crítico", threshold: "< $15,000", status: "resuelta" as const },
-        { id: 4, date: "2026-08-14", type: "Tasa de handoff", threshold: "> 8%", status: "resuelta" as const },
-      ];
+      { id: 1, date: "2026-08-31", type: "Saldo crítico", threshold: "< $15,000", status: "activa" as const },
+      { id: 2, date: "2026-08-28", type: "Consumo alto", threshold: "> $600/día", status: "resuelta" as const },
+      { id: 3, date: "2026-08-21", type: "Saldo crítico", threshold: "< $15,000", status: "resuelta" as const },
+      { id: 4, date: "2026-08-14", type: "Tasa de handoff", threshold: "> 8%", status: "resuelta" as const },
+    ];
 
   const displayHandoffs = handoffsList.length > 0
     ? handoffsList.map((h) => ({
-        id: h.id,
-        date: h.fecha.slice(0, 10),
-        reason: h.motivo,
-        agent: h.agente?.nombre || "Sin asignar",
-        status: h.estado === "PENDIENTE" ? "pendiente" : h.estado === "ASIGNADO" ? "en curso" : "resuelto",
-      }))
+      id: h.id,
+      date: h.fecha.slice(0, 10),
+      reason: h.motivo,
+      agent: h.agente?.nombre || "Sin asignar",
+      status: h.estado === "PENDIENTE" ? "pendiente" : h.estado === "ASIGNADO" ? "en curso" : "resuelto",
+    }))
     : [
-        { id: 1, date: "2026-09-03", reason: "Disputa compleja", agent: "María López", status: "pendiente" },
-        { id: 2, date: "2026-09-03", reason: "Acceso a cuenta", agent: "Carlos Ruiz", status: "en curso" },
-        { id: 3, date: "2026-09-02", reason: "Solicitud directa", agent: "Ana Torres", status: "resuelto" },
-        { id: 4, date: "2026-09-01", reason: "Transacción sospechosa", agent: "David Kim", status: "resuelto" },
-      ];
+      { id: 1, date: "2026-09-03", reason: "Disputa compleja", agent: "María López", status: "pendiente" },
+      { id: 2, date: "2026-09-03", reason: "Acceso a cuenta", agent: "Carlos Ruiz", status: "en curso" },
+      { id: 3, date: "2026-09-02", reason: "Solicitud directa", agent: "Ana Torres", status: "resuelto" },
+      { id: 4, date: "2026-09-01", reason: "Transacción sospechosa", agent: "David Kim", status: "resuelto" },
+    ];
 
   // Filtered alerts for Alertas tab
   const filteredAlertsTab = displayAlerts.filter((a) => {
@@ -451,7 +451,7 @@ export default function Dashboard() {
 
           <div style={{ margin: "16px 0 8px", height: "1px", background: colors.border }} />
 
-          <button
+          {/* <button
             onClick={() => navigate("/")}
             style={{
               display: "flex",
@@ -473,7 +473,8 @@ export default function Dashboard() {
           >
             <IconChat size={16} />
             Chat Cliente
-          </button>
+          </button> */}
+
         </nav>
 
         {/* Theme toggle & environment */}
@@ -609,13 +610,13 @@ export default function Dashboard() {
                 width: "36px",
                 height: "36px",
                 borderRadius: "8px",
-                background: "linear-gradient(135deg, #7c3aed, #a855f7)",
+                background: "linear-gradient(135deg, #FFB3C7, #e298c5ff)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
                 fontSize: "12px",
                 fontWeight: 600,
-                color: "white",
+                color: "black",
                 cursor: "pointer",
                 boxShadow: "0 2px 6px rgba(124,58,237,0.3)",
               }}

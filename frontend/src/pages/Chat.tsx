@@ -454,7 +454,7 @@ export default function Chat() {
     {
       id: "sys-welcome",
       role: "system",
-      text: "Este chat cuenta con asistencia inteligente y puede derivarte a un agente humano si tu caso lo requiere.",
+      text: "Puedes solicitar un agente humano si lo necesitas.",
     },
   ]);
   const [input, setInput] = useState("");
@@ -685,7 +685,7 @@ export default function Chat() {
                   width: "56px",
                   height: "56px",
                   borderRadius: "16px",
-                  background: "linear-gradient(135deg, #a855f7 0%, #7c3aed 100%)",
+                  background: "linear-gradient(135deg, #FFB3C7 0%, #aa73f9 100%)",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
@@ -719,7 +719,7 @@ export default function Chat() {
                   margin: "0 0 24px 0",
                 }}
               >
-                Soy tu asistente virtual de Klarna. Puedo ayudarte con la gestión de tus pagos en cuotas, estado de tus pedidos, devoluciones y más.
+                Soy tu asistente virtual de Klarna. Puedo ayudarte con lo que necesites.
               </p>
 
               {/* Suggestions Grid */}
