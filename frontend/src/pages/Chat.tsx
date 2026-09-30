@@ -19,6 +19,7 @@ interface ChatMessage {
   agentName?: string;
   actions?: MessageAction[];
   timestamp?: string;
+  simulated?: boolean;
 }
 
 // ─── Themes (Exact tokens from ChatKlarna) ────────────────────────────────────
@@ -218,6 +219,14 @@ const SUGGESTIONS = [
   "¿Cuáles son las políticas de reembolso?",
 ];
 
+const INITIAL_MESSAGES: ChatMessage[] = [
+  {
+    id: "sys-welcome",
+    role: "system",
+    text: "Puedes solicitar un agente humano si lo necesitas.",
+  },
+];
+
 // ─── Sub-Components ───────────────────────────────────────────────────────────
 
 function TypingIndicator({ t }: { t: ThemeTokens }) {
@@ -307,11 +316,13 @@ function AssistantBubble({
   text,
   actions,
   onAction,
+  simulated,
   t,
 }: {
   text: string;
   actions?: MessageAction[];
   onAction?: (label: string) => void;
+  simulated?: boolean;
   t: ThemeTokens;
 }) {
   return (
@@ -349,6 +360,14 @@ function AssistantBubble({
         >
           {text}
         </div>
+        {simulated && (
+          <span
+            title="El proveedor de IA no está disponible; se muestra una respuesta de ejemplo."
+            style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "10px", color: t.systemText, paddingLeft: "2px" }}
+          >
+            modo demo · respuesta simulada
+          </span>
+        )}
         {actions && actions.length > 0 && (
           <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", paddingLeft: "2px" }}>
             {actions.map((a) => (
@@ -450,17 +469,13 @@ function AgentBubble({
 export default function Chat() {
   const navigate = useNavigate();
   const [isDark, setIsDark] = useState(true);
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: "sys-welcome",
-      role: "system",
-      text: "Puedes solicitar un agente humano si lo necesitas.",
-    },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [conversacionId, setConversacionId] = useState<number | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const localIdRef = useRef(0);
+  const nextLocalId = (prefix: string) => `${prefix}-${++localIdRef.current}`;
 
   const t = isDark ? dark : light;
   const userId = 1;
@@ -476,7 +491,7 @@ export default function Chat() {
 
     // Add user message
     const userMsg: ChatMessage = {
-      id: `user-${Date.now()}`,
+      id: nextLocalId("user"),
       role: "user",
       text: query,
       timestamp: new Date().toISOString(),
@@ -485,25 +500,27 @@ export default function Chat() {
     setIsTyping(true);
 
     try {
-      const response: MensajeResponse = await enviarMensaje(userId, query, conversacionId || undefined);
+      const response: MensajeResponse = await enviarMensaje(userId, query, conversacionId);
 
       setConversacionId(response.conversacionId);
 
       if (response.tipo === "handoff") {
-        // Human escalation
-        const systemNotice: ChatMessage = {
-          id: `sys-handoff-${Date.now()}`,
-          role: "system",
-          text: "Derivando tu consulta con un agente especializado de soporte...",
-        };
+        // Human escalation (el aviso solo se muestra la primera vez)
+        const systemNotice: ChatMessage[] = isHandedOff
+          ? []
+          : [{
+            id: nextLocalId("sys-handoff"),
+            role: "system",
+            text: "Derivando tu consulta con un agente especializado de soporte...",
+          }];
         const agentMsg: ChatMessage = {
           id: response.mensaje.id,
           role: "agent",
           text: response.mensaje.contenido,
-          agentName: response.agente,
+          agentName: response.agente ?? undefined,
           timestamp: response.mensaje.timestamp,
         };
-        setMessages((prev) => [...prev, systemNotice, agentMsg]);
+        setMessages((prev) => [...prev, ...systemNotice, agentMsg]);
       } else {
         // AI Assistant response with contextual actions
         const actions: MessageAction[] = [
@@ -517,6 +534,7 @@ export default function Chat() {
           text: response.mensaje.contenido,
           actions,
           timestamp: response.mensaje.timestamp,
+          simulated: response.simulado,
         };
         setMessages((prev) => [...prev, assistantMsg]);
       }
@@ -525,7 +543,7 @@ export default function Chat() {
       setMessages((prev) => [
         ...prev,
         {
-          id: `err-${Date.now()}`,
+          id: nextLocalId("err"),
           role: "assistant",
           text: "Disculpa las molestias, ocurrió un inconveniente temporal al conectar con el asistente. Por favor, intenta enviar tu mensaje nuevamente.",
         },
@@ -533,6 +551,13 @@ export default function Chat() {
     } finally {
       setIsTyping(false);
     }
+  };
+
+  const handleNewConversation = () => {
+    if (isTyping) return;
+    setMessages(INITIAL_MESSAGES);
+    setConversacionId(null);
+    setInput("");
   };
 
   const handleAction = (label: string) => {
@@ -545,6 +570,9 @@ export default function Chat() {
 
   // Has the conversation started? (i.e. more than initial system message)
   const hasUserMessages = messages.some((m) => m.role === "user");
+  const isHandedOff = messages.some((m) => m.role === "agent");
+  // Las acciones rápidas solo se muestran en la última respuesta del asistente
+  const lastAssistantId = [...messages].reverse().find((m) => m.role === "assistant")?.id;
 
   return (
     <div
@@ -601,6 +629,29 @@ export default function Chat() {
               <span className="pulse-dot" style={{ display: "inline-block", width: "7px", height: "7px", borderRadius: "50%", background: "#4ade80" }} />
               <span style={{ color: t.headerSub, fontSize: "12px", fontWeight: 500 }}>Asistente en línea</span>
             </div>
+
+            {/* New conversation */}
+            {hasUserMessages && (
+              <button
+                onClick={handleNewConversation}
+                disabled={isTyping}
+                title="Iniciar una nueva conversación"
+                style={{
+                  background: t.toggleBg,
+                  border: `1px solid ${t.toggleBorder}`,
+                  color: t.toggleColor,
+                  height: "32px",
+                  padding: "0 10px",
+                  borderRadius: "8px",
+                  fontSize: "12px",
+                  fontWeight: 500,
+                  cursor: isTyping ? "default" : "pointer",
+                  flexShrink: 0,
+                }}
+              >
+                + Nueva
+              </button>
+            )}
 
             {/* Dark / Light Toggle */}
             <button
@@ -772,7 +823,16 @@ export default function Chat() {
             if (m.role === "system") return <SystemMessage key={m.id} text={m.text} t={t} />;
             if (m.role === "user") return <UserBubble key={m.id} text={m.text} t={t} />;
             if (m.role === "agent") return <AgentBubble key={m.id} text={m.text} agentName={m.agentName} t={t} />;
-            return <AssistantBubble key={m.id} text={m.text} actions={m.actions} onAction={handleAction} t={t} />;
+            return (
+              <AssistantBubble
+                key={m.id}
+                text={m.text}
+                actions={m.id === lastAssistantId && !isHandedOff ? m.actions : undefined}
+                onAction={handleAction}
+                simulated={m.simulated}
+                t={t}
+              />
+            );
           })}
 
           {isTyping && <TypingIndicator t={t} />}
@@ -866,6 +926,9 @@ export default function Chat() {
               Prefiero hablar con un representante
             </button>
           </div>
+          <p style={{ textAlign: "center", marginTop: "6px", fontSize: "10.5px", color: t.representativeText }}>
+            Prototipo académico basado en el caso Klarna × OpenAI. No está afiliado a Klarna.
+          </p>
         </div>
       </div>
     </div>

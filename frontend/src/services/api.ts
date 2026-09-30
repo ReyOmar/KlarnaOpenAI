@@ -1,6 +1,8 @@
 // API Service Layer — Fetch wrappers para cada endpoint del backend
 
-const API_BASE = '/api';
+// En desarrollo Vite redirige /api al backend (ver vite.config.ts).
+// Si el frontend se despliega en otro dominio, define VITE_API_URL=https://mi-backend.com
+const API_BASE = `${(import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '')}/api`;
 
 async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${url}`, {
@@ -27,10 +29,12 @@ export type MensajeResponse = {
     contenido: string;
     timestamp: string;
   };
-  agente?: string;
+  agente?: string | null;
   motivo?: string;
+  simulado?: boolean;
   _debug?: {
     modelo: string;
+    modeloApi: string;
     motivo: string;
     tokensEntrada: number;
     tokensSalida: number;
@@ -38,10 +42,10 @@ export type MensajeResponse = {
   };
 }
 
-export function enviarMensaje(userId: number, contenido: string, conversacionId?: number): Promise<MensajeResponse> {
+export function enviarMensaje(userId: number, contenido: string, conversacionId?: number | null): Promise<MensajeResponse> {
   return fetchJSON('/mensajes', {
     method: 'POST',
-    body: JSON.stringify({ userId, contenido, conversacionId }),
+    body: JSON.stringify({ userId, contenido, conversacionId: conversacionId ?? undefined }),
   });
 }
 
@@ -54,6 +58,7 @@ export type SaldoResponse = {
   consumoPromedio7d: number;
   diasHastaAgotamiento: number | '∞';
   presupuestoMensual: number;
+  umbralAlerta: number;
   fecha: string;
 }
 
@@ -137,6 +142,7 @@ export type DistribucionResponse = {
   modelos: ModeloDistribucion[];
   totalConsultas: number;
   totalCosto: number;
+  proveedor: string;
 }
 
 export function obtenerDistribucion(): Promise<DistribucionResponse> {
@@ -161,4 +167,26 @@ export function actualizarConfiguracion(data: Partial<Pick<Configuracion, 'presu
     method: 'PUT',
     body: JSON.stringify(data),
   });
+}
+
+// ─── Health ─────────────────────────────────────────────
+
+export type HealthResponse = {
+  status: 'ok' | 'degradado';
+  baseDatos: boolean;
+  ia: {
+    proveedor: string;
+    baseURL: string | null;
+    modelos: { terra: string; luna: string };
+    fallbackSimulado: boolean;
+    advertencia: string | null;
+    ultimaLlamada: 'sin-uso' | 'ok' | 'error' | 'simulado';
+    ultimoError: string | null;
+    fechaUltimaLlamada: string | null;
+  };
+  timestamp: string;
+}
+
+export function obtenerHealth(): Promise<HealthResponse> {
+  return fetchJSON('/health');
 }

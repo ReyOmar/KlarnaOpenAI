@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   AreaChart,
@@ -19,6 +19,7 @@ import {
   obtenerConfiguracion,
   actualizarConfiguracion,
   resolverAlerta,
+  obtenerHealth,
 } from "../services/api";
 import type {
   SaldoResponse,
@@ -27,6 +28,8 @@ import type {
   Handoff,
   DistribucionResponse,
   Configuracion,
+  HealthResponse,
+  ModeloDistribucion,
 } from "../services/api";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -158,9 +161,13 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const [activeNav, setActiveNav] = useState<NavItem>("resumen");
   const [theme, setTheme] = useState<Theme>("dark");
-  const [alertThreshold, setAlertThreshold] = useState(15000);
+  const [alertThreshold, setAlertThreshold] = useState(2000);
   const [monthlyBudget, setMonthlyBudget] = useState(20000);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState(false);
+  const [health, setHealth] = useState<HealthResponse | null>(null);
+  const configLoadedRef = useRef(false);
 
   // Backend state
   const [saldo, setSaldo] = useState<SaldoResponse | null>(null);
@@ -201,24 +208,32 @@ export default function Dashboard() {
   // Fetch real data from backend
   const fetchData = useCallback(async () => {
     try {
-      const [sData, hData, aData, handData, dData, cData] = await Promise.all([
+      const [sData, hData, aData, handData, dData, cData, healthData] = await Promise.all([
         obtenerSaldo().catch(() => null),
-        obtenerSaldoHistorial(30).catch(() => []),
-        obtenerAlertas().catch(() => []),
-        obtenerHandoffs().catch(() => []),
+        obtenerSaldoHistorial(30).catch(() => null),
+        obtenerAlertas().catch(() => null),
+        obtenerHandoffs().catch(() => null),
         obtenerDistribucion().catch(() => null),
         obtenerConfiguracion().catch(() => null),
+        obtenerHealth().catch(() => null),
       ]);
 
+      setLoadError(!sData && !cData);
+      setHealth(healthData);
       if (sData) setSaldo(sData);
-      if (hData && hData.length > 0) setHistorial(hData);
+      if (hData) setHistorial(hData);
       if (aData) setAlertasList(aData);
       if (handData) setHandoffsList(handData);
       if (dData) setDistribucion(dData);
+      // Solo se sincronizan los sliders en la primera carga para no pisar
+      // lo que el usuario esté editando durante el refresco automático.
       if (cData) {
         setConfig(cData);
-        setMonthlyBudget(cData.presupuestoMensual);
-        setAlertThreshold(cData.umbralAlerta);
+        if (!configLoadedRef.current) {
+          configLoadedRef.current = true;
+          setMonthlyBudget(cData.presupuestoMensual);
+          setAlertThreshold(cData.umbralAlerta);
+        }
       }
     } catch (err) {
       console.warn("Error fetching dashboard backend data:", err);
@@ -233,15 +248,18 @@ export default function Dashboard() {
 
   const handleSave = async () => {
     try {
-      await actualizarConfiguracion({
+      setSaveError(null);
+      const actualizada = await actualizarConfiguracion({
         presupuestoMensual: monthlyBudget,
         umbralAlerta: alertThreshold,
       });
+      setConfig(actualizada);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
       fetchData();
     } catch (err) {
       console.error("Error saving config:", err);
+      setSaveError(err instanceof Error ? err.message : "No se pudo guardar la configuración");
     }
   };
 
@@ -263,80 +281,72 @@ export default function Dashboard() {
     borderRadius: "14px",
   };
 
-  // Format chart data from backend history or fallback to sample
-  const chartData = historial.length > 0
-    ? historial.map((h) => {
-      const d = new Date(h.fecha);
-      return {
-        day: `${d.getDate()} ${d.toLocaleDateString("es-ES", { month: "short" })}`,
-        balance: Math.round(h.saldoCt),
-      };
-    })
-    : [
-      { day: "1 Ago", balance: 18200 },
-      { day: "4 Ago", balance: 17340 },
-      { day: "7 Ago", balance: 16800 },
-      { day: "10 Ago", balance: 15920 },
-      { day: "13 Ago", balance: 15100 },
-      { day: "16 Ago", balance: 16400 },
-      { day: "19 Ago", balance: 15700 },
-      { day: "22 Ago", balance: 14500 },
-      { day: "25 Ago", balance: 13800 },
-      { day: "28 Ago", balance: 13100 },
-      { day: "31 Ago", balance: 12406 },
-    ];
+  // Serie del gráfico (fechas en UTC, igual que en el backend)
+  const chartData = historial.map((h) => {
+    const d = new Date(h.fecha);
+    return {
+      day: d.toLocaleDateString("es-ES", { day: "numeric", month: "short", timeZone: "UTC" }),
+      balance: Math.round(h.saldoCt),
+    };
+  });
 
-  // Distribution models
-  const terraModel = distribucion?.modelos.find((m) => m.nombre.toLowerCase().includes("terra")) || {
-    nombre: "GPT-5.6 Terra",
-    porcentajeConsultas: "62%",
-    costoTotal: 7324,
-    consultas: 42810,
-  };
-  const lunaModel = distribucion?.modelos.find((m) => m.nombre.toLowerCase().includes("luna")) || {
-    nombre: "GPT-5.6 Luna",
-    porcentajeConsultas: "38%",
-    costoTotal: 5082,
-    consultas: 26230,
-  };
+  // Variación del saldo frente a hace 7 días (si hay historial suficiente)
+  const saldoHace7 = historial.length >= 8 ? historial[historial.length - 8].saldoCt : null;
+  const deltaSaldo = saldo && saldoHace7 ? ((saldo.saldoActual - saldoHace7) / saldoHace7) * 100 : null;
+  const deltaConsumo = saldo && saldo.consumoPromedio7d > 0
+    ? ((saldo.consumoDiario - saldo.consumoPromedio7d) / saldo.consumoPromedio7d) * 100
+    : null;
+  const formatDelta = (v: number | null) => (v === null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`);
+  const diasAgotamiento = saldo?.diasHastaAgotamiento;
 
-  const terraPctNum = parseFloat(String(terraModel.porcentajeConsultas)) || 62;
-  const lunaPctNum = parseFloat(String(lunaModel.porcentajeConsultas)) || 38;
-  const totalPeriodCost = distribucion?.totalCosto || (terraModel.costoTotal + lunaModel.costoTotal) || 12406;
+  // Distribución de modelos (sin datos → ceros)
+  const emptyModel = (nombre: string): ModeloDistribucion => ({
+    id: 0, nombre, nombreApi: "—", consultas: 0, costoTotal: 0,
+    tokensEntradaTotal: 0, tokensSalidaTotal: 0, porcentajeConsultas: "0", porcentajeCosto: "0",
+  });
+  const terraModel = distribucion?.modelos.find((m) => m.nombre === "Terra") ?? emptyModel("Terra");
+  const lunaModel = distribucion?.modelos.find((m) => m.nombre === "Luna") ?? emptyModel("Luna");
+
+  const terraPctNum = parseFloat(terraModel.porcentajeConsultas) || 0;
+  const lunaPctNum = parseFloat(lunaModel.porcentajeConsultas) || 0;
+  const totalPeriodCost = distribucion?.totalCosto ?? 0;
+  const formatUsd = (v: number) =>
+    `$${v.toLocaleString("en-US", { minimumFractionDigits: v > 0 && v < 100 ? 2 : 0, maximumFractionDigits: v < 1 ? 4 : v < 100 ? 2 : 0 })}`;
 
   // Alerts display list
   const activeAlertsCount = alertasList.filter((a) => a.estado === "ACTIVA").length;
   const pendingHandoffsCount = handoffsList.filter((h) => h.estado === "PENDIENTE").length;
 
-  const displayAlerts = alertasList.length > 0
-    ? alertasList.map((a) => ({
-      id: a.id,
-      date: a.fecha.slice(0, 10),
-      type: a.tipo === "CRITICO" ? "Saldo crítico" : a.tipo === "BAJO" ? "Consumo alto" : "Saldo agotado",
-      threshold: `< $${a.umbralUsd?.toLocaleString() || "15,000"}`,
-      status: a.estado.toLowerCase() as "activa" | "resuelta",
-    }))
-    : [
-      { id: 1, date: "2026-08-31", type: "Saldo crítico", threshold: "< $15,000", status: "activa" as const },
-      { id: 2, date: "2026-08-28", type: "Consumo alto", threshold: "> $600/día", status: "resuelta" as const },
-      { id: 3, date: "2026-08-21", type: "Saldo crítico", threshold: "< $15,000", status: "resuelta" as const },
-      { id: 4, date: "2026-08-14", type: "Tasa de handoff", threshold: "> 8%", status: "resuelta" as const },
-    ];
+  const alertLabels: Record<Alerta["tipo"], string> = {
+    BAJO: "Saldo bajo",
+    CRITICO: "Saldo crítico",
+    AGOTADO: "Saldo agotado",
+  };
 
-  const displayHandoffs = handoffsList.length > 0
-    ? handoffsList.map((h) => ({
-      id: h.id,
-      date: h.fecha.slice(0, 10),
-      reason: h.motivo,
-      agent: h.agente?.nombre || "Sin asignar",
-      status: h.estado === "PENDIENTE" ? "pendiente" : h.estado === "ASIGNADO" ? "en curso" : "resuelto",
-    }))
-    : [
-      { id: 1, date: "2026-09-03", reason: "Disputa compleja", agent: "María López", status: "pendiente" },
-      { id: 2, date: "2026-09-03", reason: "Acceso a cuenta", agent: "Carlos Ruiz", status: "en curso" },
-      { id: 3, date: "2026-09-02", reason: "Solicitud directa", agent: "Ana Torres", status: "resuelto" },
-      { id: 4, date: "2026-09-01", reason: "Transacción sospechosa", agent: "David Kim", status: "resuelto" },
-    ];
+  const displayAlerts = alertasList.map((a) => ({
+    id: a.id,
+    date: a.fecha.slice(0, 10),
+    type: alertLabels[a.tipo] ?? a.tipo,
+    threshold: `< $${(a.tipo === "CRITICO" ? a.umbralUsd * 0.25 : a.tipo === "AGOTADO" ? 0 : a.umbralUsd).toLocaleString("en-US")}`,
+    status: a.estado.toLowerCase(),
+  }));
+
+  const displayHandoffs = handoffsList.map((h) => ({
+    id: h.id,
+    date: h.fecha.slice(0, 10),
+    reason: h.motivo,
+    agent: h.agente?.nombre || "Sin asignar",
+    status: h.estado === "PENDIENTE" ? "pendiente" : h.estado === "ASIGNADO" ? "en curso" : "resuelto",
+  }));
+
+  // Estado del proveedor de IA para el panel lateral
+  const iaStatus = !health
+    ? { color: "#f87171", label: "Backend sin conexión" }
+    : health.ia.proveedor === "simulado"
+      ? { color: "#fbbf24", label: "IA simulada" }
+      : health.ia.ultimaLlamada === "error"
+        ? { color: "#fbbf24", label: `${health.ia.proveedor}: error` }
+        : { color: "#4ade80", label: `${health.ia.proveedor}: ${health.ia.ultimaLlamada === "ok" ? "activo" : "listo"}` };
 
   // Filtered alerts for Alertas tab
   const filteredAlertsTab = displayAlerts.filter((a) => {
@@ -451,7 +461,7 @@ export default function Dashboard() {
 
           <div style={{ margin: "16px 0 8px", height: "1px", background: colors.border }} />
 
-          {/* <button
+          <button
             onClick={() => navigate("/")}
             style={{
               display: "flex",
@@ -473,7 +483,7 @@ export default function Dashboard() {
           >
             <IconChat size={16} />
             Chat Cliente
-          </button> */}
+          </button>
 
         </nav>
 
@@ -502,11 +512,19 @@ export default function Dashboard() {
             </button>
           </div>
           <div style={{ marginTop: "12px", padding: "10px 12px", background: colors.inputBg, borderRadius: "8px", border: `1px solid ${colors.border}` }}>
-            <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "4px" }}>Entorno</div>
-            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-              <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#4ade80", display: "inline-block" }} />
-              <span style={{ fontSize: "12px", color: "#4ade80", fontWeight: 500 }}>Producción activa</span>
+            <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "4px" }}>Proveedor de IA</div>
+            <div
+              style={{ display: "flex", alignItems: "center", gap: "6px" }}
+              title={health?.ia.ultimoError ?? health?.ia.advertencia ?? (health ? `Terra: ${health.ia.modelos.terra} · Luna: ${health.ia.modelos.luna}` : "No se pudo contactar al backend")}
+            >
+              <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: iaStatus.color, display: "inline-block", flexShrink: 0 }} />
+              <span style={{ fontSize: "12px", color: iaStatus.color, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{iaStatus.label}</span>
             </div>
+            {health?.ia.ultimaLlamada === "error" && health.ia.fallbackSimulado && (
+              <div style={{ fontSize: "10px", color: colors.textTertiary, marginTop: "4px", lineHeight: 1.4 }}>
+                Respondiendo en modo simulado
+              </div>
+            )}
           </div>
         </div>
       </aside>
@@ -628,6 +646,11 @@ export default function Dashboard() {
 
         {/* ── Scrollable content ── */}
         <div style={{ flex: 1, overflowY: "auto", padding: "28px 32px 40px" }}>
+          {loadError && (
+            <div style={{ marginBottom: "20px", padding: "12px 16px", borderRadius: "10px", background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", color: "#f87171", fontSize: "13px" }}>
+              No se pudo conectar con el backend. Verifica que esté corriendo (<code>npm run dev</code> en <code>backend/</code>) y que PostgreSQL esté activo.
+            </div>
+          )}
           {activeNav === "resumen" && (
             <>
               {/* ── Metric Cards ── */}
@@ -635,11 +658,11 @@ export default function Dashboard() {
                 {/* Saldo actual */}
                 <MetricCard
                   label="Saldo actual C(t)"
-                  value={saldo ? `$${Math.round(saldo.saldoActual).toLocaleString()}` : "$12,406"}
-                  valueColor="#4ade80"
-                  delta="+2.1%"
-                  deltaPositive={true}
-                  sub="vs. semana anterior"
+                  value={saldo ? `$${Math.round(saldo.saldoActual).toLocaleString("en-US")}` : "—"}
+                  valueColor={saldo && saldo.saldoActual < saldo.umbralAlerta ? "#f87171" : "#4ade80"}
+                  delta={formatDelta(deltaSaldo)}
+                  deltaPositive={(deltaSaldo ?? 0) >= 0}
+                  sub="vs. hace 7 días"
                   colors={colors}
                   icon={
                     <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -650,11 +673,11 @@ export default function Dashboard() {
                 {/* Consumo diario */}
                 <MetricCard
                   label="Consumo diario (U)"
-                  value={saldo ? `$${Math.round(saldo.consumoDiario).toLocaleString()}` : "$491"}
+                  value={saldo ? formatUsd(saldo.consumoDiario) : "—"}
                   valueColor="#fb923c"
-                  delta="-5.3%"
-                  deltaPositive={false}
-                  sub="promedio últimos 7 días"
+                  delta={formatDelta(deltaConsumo)}
+                  deltaPositive={(deltaConsumo ?? 0) <= 0}
+                  sub={saldo ? `hoy vs. prom. 7d (${formatUsd(saldo.consumoPromedio7d)})` : "hoy vs. promedio 7 días"}
                   colors={colors}
                   icon={
                     <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -666,11 +689,11 @@ export default function Dashboard() {
                 {/* Recarga diaria */}
                 <MetricCard
                   label="Recarga diaria (R)"
-                  value={saldo ? `$${Math.round(saldo.recargaDiaria).toLocaleString()}` : "$667"}
+                  value={saldo ? `$${Math.round(saldo.recargaDiaria).toLocaleString("en-US")}` : "—"}
                   valueColor="#60a5fa"
-                  delta="+0.0%"
+                  delta="R"
                   deltaPositive={true}
-                  sub="tarifa fija mensual"
+                  sub={saldo ? `presupuesto $${saldo.presupuestoMensual.toLocaleString("en-US")}/mes ÷ 30` : "presupuesto mensual ÷ 30"}
                   colors={colors}
                   icon={
                     <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -683,16 +706,16 @@ export default function Dashboard() {
                 <MetricCard
                   label="Días hasta agotamiento"
                   value={
-                    saldo
-                      ? typeof saldo.diasHastaAgotamiento === "number"
-                        ? `~${saldo.diasHastaAgotamiento}`
+                    diasAgotamiento === undefined
+                      ? "—"
+                      : typeof diasAgotamiento === "number"
+                        ? `~${diasAgotamiento}`
                         : "∞"
-                      : "~71"
                   }
-                  valueColor="#4ade80"
-                  delta="Balance positivo"
-                  deltaPositive={true}
-                  sub={saldo && typeof saldo.diasHastaAgotamiento !== "number" ? "recarga supera consumo" : "a consumo actual"}
+                  valueColor={typeof diasAgotamiento === "number" ? "#fb923c" : "#4ade80"}
+                  delta={typeof diasAgotamiento === "number" ? "Balance negativo" : "Balance positivo"}
+                  deltaPositive={typeof diasAgotamiento !== "number"}
+                  sub={typeof diasAgotamiento === "number" ? "al consumo promedio actual" : "la recarga supera el consumo"}
                   colors={colors}
                   icon={
                     <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -723,10 +746,13 @@ export default function Dashboard() {
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                         <div style={{ width: "16px", borderTop: "2px dashed #ef4444" }} />
-                        <span style={{ fontSize: "11px", color: colors.textSec }}>Umbral crítico</span>
+                        <span style={{ fontSize: "11px", color: colors.textSec }}>Umbral de alerta</span>
                       </div>
                     </div>
                   </div>
+                  {chartData.length === 0 ? (
+                    <EmptyState text="Sin historial de saldo todavía. Ejecuta el seed o envía mensajes desde el chat." colors={colors} height={220} />
+                  ) : (
                   <ResponsiveContainer width="100%" height={220}>
                     <AreaChart data={chartData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
                       <defs>
@@ -738,6 +764,7 @@ export default function Dashboard() {
                       <CartesianGrid stroke={colors.border} strokeDasharray="3 3" vertical={false} />
                       <XAxis
                         dataKey="day"
+                        minTickGap={24}
                         tick={{ fill: colors.textTertiary, fontSize: 10, fontFamily: "JetBrains Mono, monospace" }}
                         axisLine={false}
                         tickLine={false}
@@ -761,6 +788,7 @@ export default function Dashboard() {
                       />
                     </AreaChart>
                   </ResponsiveContainer>
+                  )}
                 </div>
 
                 {/* Model Distribution */}
@@ -793,13 +821,13 @@ export default function Dashboard() {
                     }}
                   >
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-                      <span style={{ fontSize: "12px", fontWeight: 600, color: "#fb923c" }}>{terraModel.nombre}</span>
+                      <span style={{ fontSize: "12px", fontWeight: 600, color: "#fb923c" }}>Terra · {terraModel.nombreApi}</span>
                       <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "11px", color: "#fb923c" }}>{terraPctNum}%</span>
                     </div>
                     <div style={{ display: "flex", gap: "16px" }}>
                       <div>
                         <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase", letterSpacing: "0.08em" }}>Costo</div>
-                        <div style={{ fontSize: "13px", fontWeight: 600, color: colors.text }}>${Math.round(terraModel.costoTotal).toLocaleString()}</div>
+                        <div style={{ fontSize: "13px", fontWeight: 600, color: colors.text }}>{formatUsd(terraModel.costoTotal)}</div>
                       </div>
                       <div>
                         <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase", letterSpacing: "0.08em" }}>Consultas</div>
@@ -819,13 +847,13 @@ export default function Dashboard() {
                     }}
                   >
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-                      <span style={{ fontSize: "12px", fontWeight: 600, color: "#4ade80" }}>{lunaModel.nombre}</span>
+                      <span style={{ fontSize: "12px", fontWeight: 600, color: "#4ade80" }}>Luna · {lunaModel.nombreApi}</span>
                       <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "11px", color: "#4ade80" }}>{lunaPctNum}%</span>
                     </div>
                     <div style={{ display: "flex", gap: "16px" }}>
                       <div>
                         <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase", letterSpacing: "0.08em" }}>Costo</div>
-                        <div style={{ fontSize: "13px", fontWeight: 600, color: colors.text }}>${Math.round(lunaModel.costoTotal).toLocaleString()}</div>
+                        <div style={{ fontSize: "13px", fontWeight: 600, color: colors.text }}>{formatUsd(lunaModel.costoTotal)}</div>
                       </div>
                       <div>
                         <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase", letterSpacing: "0.08em" }}>Consultas</div>
@@ -836,7 +864,7 @@ export default function Dashboard() {
 
                   <div style={{ marginTop: "auto", padding: "10px 12px", background: colors.inputBg, borderRadius: "8px", border: `1px solid ${colors.border}` }}>
                     <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "2px" }}>Costo total del período</div>
-                    <div style={{ fontSize: "16px", fontWeight: 700, color: colors.text }}>${Math.round(totalPeriodCost).toLocaleString()}</div>
+                    <div style={{ fontSize: "16px", fontWeight: 700, color: colors.text }}>{formatUsd(totalPeriodCost)}</div>
                   </div>
                 </div>
               </div>
@@ -863,6 +891,7 @@ export default function Dashboard() {
                       </tr>
                     </thead>
                     <tbody>
+                      {displayAlerts.length === 0 && <EmptyRow colSpan={4} text="Sin alertas registradas" colors={colors} />}
                       {displayAlerts.slice(0, 4).map((a, i) => (
                         <tr key={i} style={{ borderTop: `1px solid ${colors.border}` }}>
                           <td style={{ padding: "11px 0", fontFamily: "JetBrains Mono, monospace", fontSize: "11px", color: colors.textSec }}>{a.date}</td>
@@ -897,6 +926,7 @@ export default function Dashboard() {
                       </tr>
                     </thead>
                     <tbody>
+                      {displayHandoffs.length === 0 && <EmptyRow colSpan={4} text="Sin escalamientos registrados" colors={colors} />}
                       {displayHandoffs.slice(0, 4).map((h, i) => (
                         <tr key={i} style={{ borderTop: `1px solid ${colors.border}` }}>
                           <td style={{ padding: "11px 0", fontFamily: "JetBrains Mono, monospace", fontSize: "11px", color: colors.textSec }}>{h.date.slice(5)}</td>
@@ -995,6 +1025,7 @@ export default function Dashboard() {
                     {saved ? "✓ Guardado" : "Guardar cambios"}
                   </button>
                 </div>
+                {saveError && <div style={{ marginTop: "12px", fontSize: "12px", color: "#f87171" }}>{saveError}</div>}
               </div>
             </>
           )}
@@ -1044,6 +1075,7 @@ export default function Dashboard() {
                   </tr>
                 </thead>
                 <tbody>
+                  {filteredAlertsTab.length === 0 && <EmptyRow colSpan={6} text="No hay alertas para este filtro" colors={colors} />}
                   {filteredAlertsTab.map((a) => (
                     <tr key={a.id} style={{ borderBottom: `1px solid ${colors.border}` }}>
                       <td style={{ padding: "14px", fontFamily: "JetBrains Mono, monospace", fontSize: "11px", color: colors.textTertiary }}>#{a.id}</td>
@@ -1089,13 +1121,13 @@ export default function Dashboard() {
                   Métricas de Enrutamiento Inteligente
                 </div>
                 <h2 style={{ fontSize: "18px", fontWeight: 600, color: colors.text, margin: "0 0 20px 0" }}>
-                  Distribución Dinámica: GPT-5.6 Terra vs GPT-5.6 Luna
+                  Distribución Dinámica: Terra vs Luna{distribucion?.proveedor ? ` (${distribucion.proveedor})` : ""}
                 </h2>
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", marginBottom: "24px" }}>
                   <div style={{ padding: "20px", borderRadius: "12px", background: "rgba(249,115,22,0.06)", border: "1px solid rgba(249,115,22,0.2)" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-                      <h3 style={{ margin: 0, fontSize: "15px", color: "#fb923c" }}>GPT-5.6 Terra (Avanzado)</h3>
+                      <h3 style={{ margin: 0, fontSize: "15px", color: "#fb923c" }}>Terra · {terraModel.nombreApi} (Avanzado)</h3>
                       <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "12px", background: "rgba(249,115,22,0.2)", color: "#fb923c", padding: "2px 8px", borderRadius: "6px" }}>
                         {terraPctNum}% del tráfico
                       </span>
@@ -1106,7 +1138,7 @@ export default function Dashboard() {
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
                       <div>
                         <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase" }}>Costo Total</div>
-                        <div style={{ fontSize: "16px", fontWeight: 700, color: colors.text }}>${Math.round(terraModel.costoTotal).toLocaleString()}</div>
+                        <div style={{ fontSize: "16px", fontWeight: 700, color: colors.text }}>{formatUsd(terraModel.costoTotal)}</div>
                       </div>
                       <div>
                         <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase" }}>Consultas</div>
@@ -1117,7 +1149,7 @@ export default function Dashboard() {
 
                   <div style={{ padding: "20px", borderRadius: "12px", background: "rgba(34,197,94,0.06)", border: "1px solid rgba(34,197,94,0.2)" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-                      <h3 style={{ margin: 0, fontSize: "15px", color: "#4ade80" }}>GPT-5.6 Luna (Económico)</h3>
+                      <h3 style={{ margin: 0, fontSize: "15px", color: "#4ade80" }}>Luna · {lunaModel.nombreApi} (Económico)</h3>
                       <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "12px", background: "rgba(34,197,94,0.2)", color: "#4ade80", padding: "2px 8px", borderRadius: "6px" }}>
                         {lunaPctNum}% del tráfico
                       </span>
@@ -1128,7 +1160,7 @@ export default function Dashboard() {
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
                       <div>
                         <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase" }}>Costo Total</div>
-                        <div style={{ fontSize: "16px", fontWeight: 700, color: colors.text }}>${Math.round(lunaModel.costoTotal).toLocaleString()}</div>
+                        <div style={{ fontSize: "16px", fontWeight: 700, color: colors.text }}>{formatUsd(lunaModel.costoTotal)}</div>
                       </div>
                       <div>
                         <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase" }}>Consultas</div>
@@ -1176,9 +1208,10 @@ export default function Dashboard() {
                   </tr>
                 </thead>
                 <tbody>
+                  {displayHandoffs.length === 0 && <EmptyRow colSpan={5} text="La cola de escalamientos está vacía" colors={colors} />}
                   {displayHandoffs.map((h) => (
                     <tr key={h.id} style={{ borderBottom: `1px solid ${colors.border}` }}>
-                      <td style={{ padding: "14px", fontFamily: "JetBrains Mono, monospace", fontSize: "11px", color: colors.textTertiary }}>#TKT-00{h.id}</td>
+                      <td style={{ padding: "14px", fontFamily: "JetBrains Mono, monospace", fontSize: "11px", color: colors.textTertiary }}>#TKT-{String(h.id).padStart(4, "0")}</td>
                       <td style={{ padding: "14px", fontFamily: "JetBrains Mono, monospace", fontSize: "12px", color: colors.textSec }}>{h.date}</td>
                       <td style={{ padding: "14px", fontSize: "13px", fontWeight: 500, color: colors.text }}>{h.reason}</td>
                       <td style={{ padding: "14px", fontSize: "13px", color: colors.textSec }}>{h.agent}</td>
@@ -1203,9 +1236,9 @@ export default function Dashboard() {
                   Modelo Matemático Stock & Flow
                 </h2>
                 <div style={{ fontSize: "13px", color: colors.textSec, marginBottom: "24px" }}>
-                  Ecuación diferencial discreta que rige la bolsa de créditos prepagada de OpenAI:
+                  Ecuación en diferencias que rige la bolsa de créditos prepagada del proveedor de IA:
                   <div style={{ fontFamily: "JetBrains Mono, monospace", background: colors.inputBg, padding: "12px 16px", borderRadius: "8px", margin: "12px 0", color: "#d8b4fe", fontSize: "13px" }}>
-                    C(t) = C(t - 1) + R - U(t)
+                    C(t) = max(C(t - 1) + R - U(t), 0)
                   </div>
                   Donde <strong style={{ color: colors.text }}>C(t)</strong> es el saldo al final del día, <strong style={{ color: colors.text }}>R</strong> es la recarga diaria (Presupuesto mensual / 30), y <strong style={{ color: colors.text }}>U(t)</strong> es el consumo acumulado diario de la API.
                   {config?.fechaActualizacion && (
@@ -1259,7 +1292,8 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: "16px" }}>
+                  {saveError && <span style={{ fontSize: "12px", color: "#f87171" }}>{saveError}</span>}
                   <button
                     onClick={handleSave}
                     style={{
@@ -1305,7 +1339,7 @@ function MetricCard({
   delta: string;
   deltaPositive: boolean;
   sub: string;
-  colors: any;
+  colors: { surface: string; border: string; textTertiary: string };
   icon: React.ReactElement;
 }) {
   return (
@@ -1346,6 +1380,24 @@ function MetricCard({
         <span style={{ fontSize: "11px", color: colors.textTertiary }}>{sub}</span>
       </div>
     </div>
+  );
+}
+
+function EmptyState({ text, colors, height }: { text: string; colors: { textTertiary: string }; height: number }) {
+  return (
+    <div style={{ height, display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", fontSize: "12px", color: colors.textTertiary, padding: "0 24px" }}>
+      {text}
+    </div>
+  );
+}
+
+function EmptyRow({ text, colSpan, colors }: { text: string; colSpan: number; colors: { textTertiary: string; border: string } }) {
+  return (
+    <tr style={{ borderTop: `1px solid ${colors.border}` }}>
+      <td colSpan={colSpan} style={{ padding: "18px 0", textAlign: "center", fontSize: "12px", color: colors.textTertiary }}>
+        {text}
+      </td>
+    </tr>
   );
 }
 
