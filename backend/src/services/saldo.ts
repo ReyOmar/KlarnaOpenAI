@@ -56,3 +56,29 @@ export function proyectarSaldo(
 
   return proyeccion;
 }
+
+// ─── Utilidades de fecha ──────────────────────────────────
+// Los saldos diarios se indexan por día UTC para que el resultado no dependa
+// de la zona horaria del servidor (local vs. despliegue en la nube).
+
+const MS_POR_DIA = 24 * 60 * 60 * 1000;
+
+/** Devuelve la medianoche UTC del día de `fecha`. */
+export function inicioDiaUTC(fecha: Date = new Date()): Date {
+  return new Date(Date.UTC(fecha.getUTCFullYear(), fecha.getUTCMonth(), fecha.getUTCDate()));
+}
+
+/** Suma (o resta, si es negativo) días completos a una fecha. */
+export function sumarDias(fecha: Date, dias: number): Date {
+  return new Date(fecha.getTime() + dias * MS_POR_DIA);
+}
+
+/** Número de días completos entre dos fechas (b - a). */
+export function diasEntre(a: Date, b: Date): number {
+  return Math.round((inicioDiaUTC(b).getTime() - inicioDiaUTC(a).getTime()) / MS_POR_DIA);
+}
+
+/** Redondea a centavos. */
+export function redondearUsd(valor: number): number {
+  return Math.round(valor * 100) / 100;
+}

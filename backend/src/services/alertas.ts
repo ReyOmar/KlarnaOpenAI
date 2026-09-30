@@ -1,9 +1,8 @@
 // Sistema de alertas — Evaluación de umbrales (spec sección 5-6)
 // Genera alertas cuando C(t) cae bajo el umbral configurado
 
-import { PrismaClient, TipoAlerta } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { TipoAlerta } from '@prisma/client';
+import prisma from '../db/prisma';
 
 export interface AlertaResult {
   generada: boolean;
@@ -66,18 +65,13 @@ export async function evaluarYRegistrarAlerta(
     return resultado;
   }
 
-  // Verificar si ya existe una alerta activa del mismo tipo hoy
-  const hoy = new Date();
-  hoy.setHours(0, 0, 0, 0);
-  const manana = new Date(hoy);
-  manana.setDate(manana.getDate() + 1);
-
+  // Verificar si ya existe una alerta activa del mismo tipo para este día
+  // (cada registro de saldo corresponde a un único día)
   const alertaExistente = await prisma.alerta.findFirst({
     where: {
       idSaldo: saldoDiarioId,
       tipo: resultado.tipo,
       estado: 'ACTIVA',
-      fecha: { gte: hoy, lt: manana },
     },
   });
 

@@ -3,39 +3,29 @@
 
 import { Router, Request, Response } from 'express';
 import prisma from '../db/prisma';
-import { calcularRecargaDiaria, calcularDiasHastaAgotamiento } from '../services/saldo';
+import {
+  calcularRecargaDiaria,
+  calcularDiasHastaAgotamiento,
+  inicioDiaUTC,
+  sumarDias,
+} from '../services/saldo';
+import { asegurarSaldoDeHoy } from '../services/saldoDiario';
+import { obtenerConfiguracion } from '../services/configuracion';
 
 const router = Router();
 
 // GET /api/saldo — Resumen actual
 router.get('/', async (_req: Request, res: Response): Promise<void> => {
   try {
-    const config = await prisma.configuracion.findFirst();
-    const recargaDiaria = calcularRecargaDiaria(config?.presupuestoMensual || 20000);
+    const config = await obtenerConfiguracion();
+    const recargaDiaria = calcularRecargaDiaria(config.presupuestoMensual);
 
-    // Obtener saldo más reciente
-    const saldoReciente = await prisma.saldoDiario.findFirst({
-      orderBy: { fecha: 'desc' },
-    });
+    // Avanza el modelo hasta hoy (aplica R en los días sin actividad)
+    const saldoHoy = await asegurarSaldoDeHoy(recargaDiaria);
 
-    if (!saldoReciente) {
-      res.json({
-        saldoActual: 10000,
-        recargaDiaria,
-        consumoDiario: 0,
-        diasHastaAgotamiento: Infinity,
-        presupuestoMensual: config?.presupuestoMensual || 20000,
-      });
-      return;
-    }
-
-    // Calcular consumo promedio de los últimos 7 días
-    const hace7Dias = new Date();
-    hace7Dias.setDate(hace7Dias.getDate() - 7);
-
+    // Consumo promedio de los últimos 7 días (incluye hoy)
     const saldos7Dias = await prisma.saldoDiario.findMany({
-      where: { fecha: { gte: hace7Dias } },
-      orderBy: { fecha: 'desc' },
+      where: { fecha: { gte: sumarDias(inicioDiaUTC(), -6) } },
     });
 
     const consumoPromedio = saldos7Dias.length > 0
@@ -43,19 +33,20 @@ router.get('/', async (_req: Request, res: Response): Promise<void> => {
       : 0;
 
     const diasHastaAgotamiento = calcularDiasHastaAgotamiento(
-      saldoReciente.saldoCt,
+      saldoHoy.saldoCt,
       consumoPromedio,
       recargaDiaria
     );
 
     res.json({
-      saldoActual: saldoReciente.saldoCt,
+      saldoActual: saldoHoy.saldoCt,
       recargaDiaria,
-      consumoDiario: saldoReciente.consumoU,
+      consumoDiario: saldoHoy.consumoU,
       consumoPromedio7d: consumoPromedio,
       diasHastaAgotamiento: diasHastaAgotamiento === Infinity ? '∞' : diasHastaAgotamiento,
-      presupuestoMensual: config?.presupuestoMensual || 20000,
-      fecha: saldoReciente.fecha,
+      presupuestoMensual: config.presupuestoMensual,
+      umbralAlerta: config.umbralAlerta,
+      fecha: saldoHoy.fecha,
     });
   } catch (error) {
     console.error('Error en GET /api/saldo:', error);
@@ -66,12 +57,11 @@ router.get('/', async (_req: Request, res: Response): Promise<void> => {
 // GET /api/saldo/historial?dias=30 — Serie temporal
 router.get('/historial', async (req: Request, res: Response): Promise<void> => {
   try {
-    const dias = parseInt(req.query.dias as string) || 30;
-    const desde = new Date();
-    desde.setDate(desde.getDate() - dias);
+    const diasSolicitados = parseInt(String(req.query.dias ?? ''), 10);
+    const dias = Number.isFinite(diasSolicitados) ? Math.min(Math.max(diasSolicitados, 1), 365) : 30;
 
     const historial = await prisma.saldoDiario.findMany({
-      where: { fecha: { gte: desde } },
+      where: { fecha: { gte: sumarDias(inicioDiaUTC(), -(dias - 1)) } },
       orderBy: { fecha: 'asc' },
       select: {
         fecha: true,

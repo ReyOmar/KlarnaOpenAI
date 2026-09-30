@@ -7,122 +7,114 @@ export type RouterResult =
   | { tipo: 'terra'; motivo: string }
   | { tipo: 'luna'; motivo: string };
 
-// ─── Patrones de detección ────────────────────────────────
+interface Patron {
+  etiqueta: string;
+  regex: RegExp;
+}
+
+/**
+ * Normaliza el texto para comparar sin depender de mayúsculas ni tildes:
+ * "¿Pásame con un AGENTE?" → "¿pasame con un agente?"
+ */
+export function normalizarTexto(texto: string): string {
+  return texto
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// ─── Patrones de detección (sobre texto normalizado, sin tildes) ──────
 
 // Frases que fuerzan escalamiento a humano
-const HANDOFF_PATTERNS = [
+const HANDOFF_PATTERNS: Patron[] = [
   // Petición explícita del usuario
-  'quiero un representante',
-  'hablar con un humano',
-  'hablar con una persona',
-  'quiero hablar con alguien',
-  'necesito un agente',
-  'prefiero un representante',
-  'pásame con un agente',
-  'conectar con soporte',
-  'want to speak to a human',
-  'talk to a representative',
-  'speak to an agent',
+  { etiqueta: 'solicitud de representante', regex: /\brepresentante\b/ },
+  { etiqueta: 'solicitud de agente humano', regex: /\b(agente|asesor|operador)\s+(humano|real)\b/ },
+  { etiqueta: 'solicitud de agente humano', regex: /\b(hablar|comunicarme|pasame|conectar|contactar)\b.*\b(humano|persona|alguien|agente|asesor|operador|soporte)\b/ },
+  { etiqueta: 'solicitud de agente humano', regex: /\b(necesito|quiero|prefiero)\s+(un|una)\s+(agente|asesor|operador|persona)\b/ },
+  { etiqueta: 'solicitud de agente humano', regex: /\b(speak|talk)\s+to\s+(a|an)\s+(human|person|agent|representative)\b/ },
 
   // Disputas complejas
-  'disputa',
-  'cargo no reconocido',
-  'cargo fraudulento',
-  'no autoricé',
-  'cobro indebido',
-  'doble cobro',
-  'unauthorized charge',
+  { etiqueta: 'disputa', regex: /\bdisputa/ },
+  { etiqueta: 'cargo no reconocido', regex: /cargo (no reconocido|fraudulento|indebido|duplicado)/ },
+  { etiqueta: 'cobro indebido', regex: /(cobro indebido|doble cobro|cobraron (dos veces|doble))/ },
+  { etiqueta: 'transaccion no autorizada', regex: /(no autorice|no reconozco|unauthorized charge)/ },
 
   // Problemas de acceso / fraude
-  'cuenta bloqueada',
-  'no puedo acceder',
-  'verificación de identidad',
-  'fraude',
-  'robo de identidad',
-  'hackeo',
-  'hackearon',
-  'account locked',
+  { etiqueta: 'cuenta bloqueada', regex: /(cuenta bloqueada|me bloquearon|account locked)/ },
+  { etiqueta: 'problema de acceso', regex: /no puedo (acceder|entrar|iniciar sesion)/ },
+  { etiqueta: 'verificacion de identidad', regex: /verificacion de identidad/ },
+  { etiqueta: 'fraude', regex: /\b(fraude|estafa|robo de identidad|suplantacion)\b/ },
+  { etiqueta: 'cuenta comprometida', regex: /\b(hackeo|hackearon|hackeada|hacked)\b/ },
 
   // Casos borde / legales
-  'demanda',
-  'abogado',
-  'legal',
-  'regulador',
-  'queja formal',
+  { etiqueta: 'caso legal', regex: /\b(demanda|demandar|abogado|legal|regulador|queja formal|denuncia)\b/ },
 ];
 
 // Indicadores de consulta compleja → Terra
-const COMPLEX_PATTERNS = [
+const COMPLEX_PATTERNS: Patron[] = [
   // Operaciones financieras sensibles
-  'reembolso',
-  'devolución',
-  'cancelar pago',
-  'modificar plan',
-  'extender plazo',
-  'ajustar cuotas',
-  'cambiar método de pago',
-  'refund',
+  { etiqueta: 'reembolso', regex: /\b(reembols|refund)/ },
+  { etiqueta: 'devolucion', regex: /\bdevol/ },
+  { etiqueta: 'cancelar pago', regex: /cancelar.*(pago|cuota|compra)/ },
+  { etiqueta: 'modificar plan', regex: /(modificar|cambiar|ajustar).*(plan|cuotas)/ },
+  { etiqueta: 'extender plazo', regex: /(extender|ampliar|aplazar|postergar).*(plazo|pago|fecha)/ },
+  { etiqueta: 'cambiar metodo de pago', regex: /cambiar.*(metodo de pago|tarjeta)/ },
 
   // Análisis de cuenta
-  'explica mi estado de cuenta',
-  'por qué me cobraron',
-  'desglose',
-  'historial de pagos',
-  'explain my statement',
+  { etiqueta: 'estado de cuenta', regex: /(explica|explicame|detalle).*(estado de cuenta|factura)/ },
+  { etiqueta: 'explicacion de cobro', regex: /por que me (cobraron|cobran)/ },
+  { etiqueta: 'desglose', regex: /\b(desglose|historial de pagos|explain my statement)\b/ },
 
   // Denegaciones
-  'por qué me negaron',
-  'denegación',
-  'rechazaron mi compra',
-  'declined',
-
-  // Múltiples temas o consultas largas (se evalúa por longitud más abajo)
+  { etiqueta: 'denegacion', regex: /(por que me (negaron|rechazaron)|denegacion|denegad|rechazaron mi compra|declined)/ },
 ];
+
+// Umbral de longitud a partir del cual la consulta se considera compleja
+const LONGITUD_COMPLEJA = 200;
 
 // ─── Motor de clasificación ──────────────────────────────
 
 /**
  * Clasifica una consulta del usuario según las reglas del router.
- * 
+ *
  * Decisión 1 — Handoff: escala a humano si detecta patrones de disputa,
  * acceso, fraude, caso borde, o petición explícita.
- * 
+ *
  * Decisión 2 — Modelo: si la consulta es compleja o sensible → Terra;
  * si es simple y de bajo riesgo → Luna.
- * 
+ *
  * Punto de extensión: esta función puede ser reemplazada por un
  * clasificador ML más sofisticado en el futuro.
  */
 export function clasificarConsulta(contenido: string): RouterResult {
-  const texto = contenido.toLowerCase().trim();
+  const texto = normalizarTexto(contenido);
 
   // ─── Decisión 1: ¿Handoff? ─────────────────────────────
-  for (const pattern of HANDOFF_PATTERNS) {
-    if (texto.includes(pattern)) {
-      return {
-        tipo: 'handoff',
-        motivo: `Detectado patrón de escalamiento: "${pattern}"`,
-      };
-    }
+  const handoff = HANDOFF_PATTERNS.find((p) => p.regex.test(texto));
+  if (handoff) {
+    return {
+      tipo: 'handoff',
+      motivo: `Escalamiento: ${handoff.etiqueta}`,
+    };
   }
 
   // ─── Decisión 2: ¿Terra o Luna? ────────────────────────
-
-  // Verificar patrones complejos
-  for (const pattern of COMPLEX_PATTERNS) {
-    if (texto.includes(pattern)) {
-      return {
-        tipo: 'terra',
-        motivo: `Consulta compleja/sensible: "${pattern}"`,
-      };
-    }
-  }
-
-  // Consultas largas (> 200 caracteres) tienden a ser más complejas
-  if (texto.length > 200) {
+  const compleja = COMPLEX_PATTERNS.find((p) => p.regex.test(texto));
+  if (compleja) {
     return {
       tipo: 'terra',
-      motivo: 'Consulta extensa (> 200 caracteres), posible complejidad',
+      motivo: `Consulta compleja/sensible: ${compleja.etiqueta}`,
+    };
+  }
+
+  // Consultas largas tienden a ser más complejas
+  if (texto.length > LONGITUD_COMPLEJA) {
+    return {
+      tipo: 'terra',
+      motivo: `Consulta extensa (> ${LONGITUD_COMPLEJA} caracteres), posible complejidad`,
     };
   }
 
@@ -140,32 +132,4 @@ export function clasificarConsulta(contenido: string): RouterResult {
     tipo: 'luna',
     motivo: 'Consulta simple y de bajo riesgo',
   };
-}
-
-/**
- * Verifica si una consulta está dentro del alcance permitido de la IA.
- * Basado en las reglas reales de Klarna (spec sección 5).
- */
-export function estaEnAlcance(contenido: string): boolean {
-  const texto = contenido.toLowerCase();
-  
-  const temasPermitidos = [
-    // Gestión de pagos
-    'pago', 'cuota', 'plan', 'plazo', 'factura',
-    // Seguimiento de pedidos
-    'pedido', 'orden', 'envío', 'entrega', 'devolución', 'reembolso', 'estado',
-    // Cuenta
-    'cuenta', 'perfil', 'datos', 'contraseña',
-    // Políticas
-    'política', 'términos', 'condiciones',
-    // Denegaciones
-    'denegación', 'rechazaron', 'negaron',
-    // Saludos y consultas generales (aceptar siempre)
-    'hola', 'buenos', 'gracias', 'ayuda', 'help',
-    // English equivalents
-    'payment', 'order', 'delivery', 'return', 'account', 'policy',
-  ];
-
-  // Si contiene al menos un tema permitido, está en alcance
-  return temasPermitidos.some(tema => texto.includes(tema)) || texto.length < 50;
 }

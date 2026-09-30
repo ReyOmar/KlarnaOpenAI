@@ -2,12 +2,13 @@
 
 import { Router, Request, Response } from 'express';
 import prisma from '../db/prisma';
+import { infoIA } from '../services/ia';
 
 const router = Router();
 
 router.get('/distribucion', async (_req: Request, res: Response): Promise<void> => {
   try {
-    const modelos = await prisma.modeloIA.findMany();
+    const modelos = await prisma.modeloIA.findMany({ orderBy: { id: 'asc' } });
 
     const distribucion = await Promise.all(
       modelos.map(async (modelo) => {
@@ -44,6 +45,7 @@ router.get('/distribucion', async (_req: Request, res: Response): Promise<void> 
       })),
       totalConsultas,
       totalCosto,
+      proveedor: infoIA().proveedor,
     });
   } catch (error) {
     console.error('Error en GET /api/modelos/distribucion:', error);

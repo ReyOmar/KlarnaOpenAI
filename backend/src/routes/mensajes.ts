@@ -4,25 +4,36 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../db/prisma';
 import { clasificarConsulta } from '../services/router';
-import { enviarMensaje } from '../services/openai';
+import { generarRespuesta, MensajeHistorial } from '../services/ia';
 import { calcularCostoConversacion } from '../services/consumo';
-import { calcularSaldoDiario, calcularRecargaDiaria } from '../services/saldo';
+import { calcularRecargaDiaria } from '../services/saldo';
+import { asegurarSaldoDeHoy, registrarConsumoDiario } from '../services/saldoDiario';
 import { evaluarYRegistrarAlerta } from '../services/alertas';
+import { obtenerConfiguracion } from '../services/configuracion';
+import { obtenerUsuarioDemo } from '../services/datosBase';
 
 const router = Router();
 
+const MAX_LONGITUD_MENSAJE = 2000;
+const MENSAJES_DE_CONTEXTO = 20;
+
 interface MensajeBody {
-  userId: number;
+  userId?: number;
   conversacionId?: number;
-  contenido: string;
+  contenido?: unknown;
 }
 
 router.post('/', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { userId, conversacionId, contenido } = req.body as MensajeBody;
+    const { userId, conversacionId, contenido: contenidoRaw } = (req.body ?? {}) as MensajeBody;
+    const contenido = typeof contenidoRaw === 'string' ? contenidoRaw.trim() : '';
 
-    if (!userId || !contenido) {
-      res.status(400).json({ error: 'userId y contenido son requeridos' });
+    if (!contenido) {
+      res.status(400).json({ error: 'El campo "contenido" es requerido' });
+      return;
+    }
+    if (contenido.length > MAX_LONGITUD_MENSAJE) {
+      res.status(400).json({ error: `El mensaje supera los ${MAX_LONGITUD_MENSAJE} caracteres` });
       return;
     }
 
@@ -30,20 +41,27 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     let conversacion;
     if (conversacionId) {
       conversacion = await prisma.conversacion.findUnique({
-        where: { id: conversacionId },
+        where: { id: Number(conversacionId) },
+        include: { handoff: { include: { agente: true } } },
       });
       if (!conversacion) {
         res.status(404).json({ error: 'Conversación no encontrada' });
         return;
       }
     } else {
+      // El prototipo no tiene login: si el usuario no existe se usa el usuario demo
+      const usuario =
+        (userId && (await prisma.usuario.findUnique({ where: { id: Number(userId) } }))) ||
+        (await obtenerUsuarioDemo());
+
       conversacion = await prisma.conversacion.create({
-        data: { idUsuario: userId },
+        data: { idUsuario: usuario.id },
+        include: { handoff: { include: { agente: true } } },
       });
     }
 
     // 2. Guardar mensaje del usuario
-    await prisma.mensaje.create({
+    const mensajeUsuario = await prisma.mensaje.create({
       data: {
         idConversacion: conversacion.id,
         remitente: 'USUARIO',
@@ -51,32 +69,55 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
       },
     });
 
-    // 3. Ejecutar router
-    const clasificacion = clasificarConsulta(contenido);
-
-    // 4. Procesar según clasificación
-    if (clasificacion.tipo === 'handoff') {
-      // Escalar a humano — no llamar IA
-      await prisma.conversacion.update({
-        where: { id: conversacion.id },
-        data: { estado: 'HANDOFF' },
-      });
-
-      // Asignar agente disponible
-      const agenteDisponible = await prisma.agente.findFirst({
-        where: { disponible: true },
-      });
-
-      await prisma.handoff.create({
+    // 3. Si la conversación ya fue escalada, la atiende el agente humano (sin IA)
+    if (conversacion.estado === 'HANDOFF' || conversacion.handoff) {
+      const agente = conversacion.handoff?.agente;
+      const mensajeAgente = await prisma.mensaje.create({
         data: {
           idConversacion: conversacion.id,
-          idAgente: agenteDisponible?.id || null,
-          motivo: clasificacion.motivo,
-          estado: agenteDisponible ? 'ASIGNADO' : 'PENDIENTE',
+          remitente: 'AGENTE_HUMANO',
+          contenido: agente
+            ? `${agente.nombre} ya tiene tu caso y te responderá en breve. Tu mensaje quedó registrado.`
+            : 'Tu caso ya está en la cola de atención humana. Un agente te responderá en breve; tu mensaje quedó registrado.',
         },
       });
 
-      // Guardar mensaje del sistema
+      res.json({
+        tipo: 'handoff',
+        conversacionId: conversacion.id,
+        mensaje: formatearMensaje(mensajeAgente),
+        agente: agente?.nombre ?? null,
+        motivo: conversacion.handoff?.motivo ?? 'Conversación ya escalada',
+        simulado: false,
+      });
+      return;
+    }
+
+    // 4. Ejecutar router
+    const clasificacion = clasificarConsulta(contenido);
+
+    // 5. Handoff: escalar a humano — no llamar a la IA
+    if (clasificacion.tipo === 'handoff') {
+      const agenteDisponible = await prisma.agente.findFirst({
+        where: { disponible: true },
+        orderBy: { id: 'asc' },
+      });
+
+      await prisma.$transaction([
+        prisma.conversacion.update({
+          where: { id: conversacion.id },
+          data: { estado: 'HANDOFF' },
+        }),
+        prisma.handoff.create({
+          data: {
+            idConversacion: conversacion.id,
+            idAgente: agenteDisponible?.id ?? null,
+            motivo: clasificacion.motivo,
+            estado: agenteDisponible ? 'ASIGNADO' : 'PENDIENTE',
+          },
+        }),
+      ]);
+
       const mensajeHandoff = await prisma.mensaje.create({
         data: {
           idConversacion: conversacion.id,
@@ -90,23 +131,17 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
       res.json({
         tipo: 'handoff',
         conversacionId: conversacion.id,
-        mensaje: {
-          id: mensajeHandoff.id,
-          remitente: 'AGENTE_HUMANO',
-          contenido: mensajeHandoff.contenido,
-          timestamp: mensajeHandoff.timestamp,
-        },
-        agente: agenteDisponible?.nombre || null,
+        mensaje: formatearMensaje(mensajeHandoff),
+        agente: agenteDisponible?.nombre ?? null,
         motivo: clasificacion.motivo,
+        simulado: false,
       });
       return;
     }
 
-    // 5. Llamar a OpenAI con el modelo seleccionado
-    const modelo = await prisma.modeloIA.findFirst({
-      where: {
-        nombre: clasificacion.tipo === 'terra' ? 'Terra' : 'Luna',
-      },
+    // 6. Llamar a la IA con el modelo seleccionado (Terra o Luna)
+    const modelo = await prisma.modeloIA.findUnique({
+      where: { nombre: clasificacion.tipo === 'terra' ? 'Terra' : 'Luna' },
     });
 
     if (!modelo) {
@@ -114,27 +149,25 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // Obtener historial de conversación para contexto
-    const historial = await prisma.mensaje.findMany({
-      where: { idConversacion: conversacion.id },
-      orderBy: { timestamp: 'asc' },
-      take: 20, // Últimos 20 mensajes como contexto
+    // Últimos N mensajes previos como contexto (sin el mensaje actual)
+    const previos = await prisma.mensaje.findMany({
+      where: {
+        idConversacion: conversacion.id,
+        id: { not: mensajeUsuario.id },
+        remitente: { in: ['USUARIO', 'ASISTENTE'] },
+      },
+      orderBy: { id: 'desc' },
+      take: MENSAJES_DE_CONTEXTO,
     });
 
-    const historialFormateado = historial
-      .filter(m => m.remitente !== 'AGENTE_HUMANO')
-      .map(m => ({
-        role: (m.remitente === 'USUARIO' ? 'user' : 'assistant') as 'user' | 'assistant',
-        content: m.contenido,
-      }));
+    const historial: MensajeHistorial[] = previos.reverse().map((m) => ({
+      role: m.remitente === 'USUARIO' ? 'user' : 'assistant',
+      content: m.contenido,
+    }));
 
-    const respuestaIA = await enviarMensaje(
-      contenido,
-      historialFormateado.slice(0, -1), // Excluir el último (ya lo enviamos como mensaje actual)
-      modelo.nombreApi
-    );
+    const respuestaIA = await generarRespuesta(contenido, historial, clasificacion.tipo);
 
-    // 6. Guardar mensaje de respuesta
+    // 7. Guardar mensaje de respuesta
     const mensajeRespuesta = await prisma.mensaje.create({
       data: {
         idConversacion: conversacion.id,
@@ -144,7 +177,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
       },
     });
 
-    // 7. Registrar consumo de API
+    // 8. Registrar consumo de API (con el pricing de referencia del modelo)
     const costo = calcularCostoConversacion(
       { costoEntradaMusd: modelo.costoEntradaMusd, costoSalidaMusd: modelo.costoSalidaMusd },
       respuestaIA.tokensEntrada,
@@ -161,72 +194,29 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
       },
     });
 
-    // 8. Actualizar saldo diario
-    const hoy = new Date();
-    hoy.setHours(0, 0, 0, 0);
+    // 9. Actualizar saldo diario: C(t) -= costo, U(t) += costo
+    const config = await obtenerConfiguracion();
+    const saldoHoy = await asegurarSaldoDeHoy(calcularRecargaDiaria(config.presupuestoMensual));
+    const saldoActualizado = await registrarConsumoDiario(saldoHoy.id, costo);
 
-    const config = await prisma.configuracion.findFirst();
-    const recargaDiaria = calcularRecargaDiaria(config?.presupuestoMensual || 20000);
+    // 10. Evaluar alertas
+    await evaluarYRegistrarAlerta(saldoActualizado.id, saldoActualizado.saldoCt, config.umbralAlerta);
 
-    let saldoHoy = await prisma.saldoDiario.findUnique({
-      where: { fecha: hoy },
-    });
-
-    if (!saldoHoy) {
-      // Obtener saldo del día anterior
-      const ayer = new Date(hoy);
-      ayer.setDate(ayer.getDate() - 1);
-      const saldoAyer = await prisma.saldoDiario.findUnique({
-        where: { fecha: ayer },
-      });
-
-      const saldoAnterior = saldoAyer?.saldoCt || 10000; // Saldo inicial por defecto
-      const nuevoSaldo = calcularSaldoDiario(saldoAnterior, recargaDiaria, 0);
-
-      saldoHoy = await prisma.saldoDiario.create({
-        data: {
-          fecha: hoy,
-          saldoCt: nuevoSaldo,
-          recargaR: recargaDiaria,
-          consumoU: 0,
-        },
-      });
-    }
-
-    // Actualizar consumo acumulado del día
-    const nuevoConsumo = saldoHoy.consumoU + costo;
-    const nuevoSaldo = Math.max(saldoHoy.saldoCt - costo, 0);
-
-    saldoHoy = await prisma.saldoDiario.update({
-      where: { id: saldoHoy.id },
-      data: {
-        consumoU: nuevoConsumo,
-        saldoCt: nuevoSaldo,
-      },
-    });
-
-    // 9. Evaluar alertas
-    const umbral = config?.umbralAlerta || 2000;
-    await evaluarYRegistrarAlerta(saldoHoy.id, nuevoSaldo, umbral);
-
-    // 10. Responder al frontend
-    // NOTA: No enviamos info del modelo al usuario final — el router es invisible
+    // 11. Responder al frontend
+    // NOTA: el chat no muestra qué modelo respondió — el router es invisible para el usuario.
     res.json({
       tipo: 'respuesta',
       conversacionId: conversacion.id,
-      mensaje: {
-        id: mensajeRespuesta.id,
-        remitente: 'ASISTENTE',
-        contenido: respuestaIA.contenido,
-        timestamp: mensajeRespuesta.timestamp,
-      },
-      // Metadata solo para debug/admin (el frontend del chat NO debe mostrar esto)
+      mensaje: formatearMensaje(mensajeRespuesta),
+      simulado: respuestaIA.simulado,
+      // Metadata solo para debug/admin (el frontend del chat NO la muestra)
       _debug: {
         modelo: modelo.nombre,
+        modeloApi: respuestaIA.modeloUsado,
         motivo: clasificacion.motivo,
         tokensEntrada: respuestaIA.tokensEntrada,
         tokensSalida: respuestaIA.tokensSalida,
-        costo: costo,
+        costo,
       },
     });
   } catch (error) {
@@ -234,5 +224,14 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     res.status(500).json({ error: 'Error interno del servidor' });
   }
 });
+
+function formatearMensaje(m: { id: number; remitente: string; contenido: string; timestamp: Date }) {
+  return {
+    id: m.id,
+    remitente: m.remitente,
+    contenido: m.contenido,
+    timestamp: m.timestamp,
+  };
+}
 
 export default router;

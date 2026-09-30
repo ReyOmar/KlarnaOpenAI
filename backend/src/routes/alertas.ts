@@ -1,4 +1,5 @@
 // GET /api/alertas — Alertas activas e históricas
+// PATCH /api/alertas/:id/resolver — Marca una alerta como resuelta
 
 import { Router, Request, Response } from 'express';
 import prisma from '../db/prisma';
@@ -27,9 +28,20 @@ router.get('/', async (_req: Request, res: Response): Promise<void> => {
   }
 });
 
-router.patch('/:id/resolver', async (req: Request, res: Response): Promise<void> => {
+router.patch('/:id/resolver', async (req: Request<{ id: string }>, res: Response): Promise<void> => {
   try {
     const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || id <= 0) {
+      res.status(400).json({ error: 'ID de alerta inválido' });
+      return;
+    }
+
+    const existe = await prisma.alerta.findUnique({ where: { id } });
+    if (!existe) {
+      res.status(404).json({ error: 'Alerta no encontrada' });
+      return;
+    }
+
     const alerta = await prisma.alerta.update({
       where: { id },
       data: { estado: 'RESUELTA' },
