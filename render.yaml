@@ -1,0 +1,30 @@
+# Blueprint de Render (https://render.com/docs/blueprint-spec)
+# Crea la base de datos PostgreSQL y un único servicio web que sirve API + frontend.
+# En Render: New → Blueprint → selecciona este repositorio.
+
+databases:
+  - name: klarna-openai-db
+    plan: free
+    databaseName: klarna_openai
+    user: klarna
+
+services:
+  - type: web
+    name: klarna-openai
+    runtime: node
+    plan: free
+    buildCommand: npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: klarna-openai-db
+          property: connectionString
+      # Proveedor de IA: groq o gemini tienen plan gratuito (ollama solo funciona en local)
+      - key: AI_PROVIDER
+        value: groq
+      - key: AI_API_KEY
+        sync: false # se pide al crear el Blueprint
