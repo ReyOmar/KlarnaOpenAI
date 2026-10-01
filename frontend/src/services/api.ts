@@ -35,6 +35,7 @@ export type MensajeResponse = {
   _debug?: {
     modelo: string;
     modeloApi: string;
+    proveedor: string;
     motivo: string;
     tokensEntrada: number;
     tokensSalida: number;
@@ -176,11 +177,10 @@ export type HealthResponse = {
   baseDatos: boolean;
   ia: {
     proveedor: string;
-    baseURL: string | null;
     modelos: { terra: string; luna: string };
     fallbackSimulado: boolean;
     advertencia: string | null;
-    ultimaLlamada: 'sin-uso' | 'ok' | 'error' | 'simulado';
+    ultimaLlamada: 'sin-uso' | 'ok' | 'respaldo' | 'error' | 'simulado';
     ultimoError: string | null;
     fechaUltimaLlamada: string | null;
   };
@@ -189,4 +189,71 @@ export type HealthResponse = {
 
 export function obtenerHealth(): Promise<HealthResponse> {
   return fetchJSON('/health');
+}
+
+// ─── Simulación ─────────────────────────────────────────
+
+export type ParametrosSimulacion = {
+  conversacionesDiarias: number;
+  crecimientoMensualPct: number;
+  variabilidadPct: number;
+  porcentajeHandoff: number;
+  porcentajeTerra: number;
+  tokensEntrada: number;
+  tokensSalida: number;
+  factorPrecios: number;
+  presupuestoMensual: number;
+  saldoInicial: number;
+  umbralAlerta: number;
+  dias: number;
+  corridas: number;
+  semilla: number;
+}
+
+export type IndicadoresSimulacion = {
+  saldoFinal: number;
+  consumoPromedioDiario: number;
+  costoTotal: number;
+  recargaDiaria: number;
+  costoPorConversacionIA: number;
+  diaAlerta: number | null;
+  diaAgotamiento: number | null;
+  diasSinServicio: number;
+  conversacionesNoAtendidas: number;
+  probabilidadAgotamiento: number;
+  presupuestoMinimoSostenible: number;
+}
+
+export type ResultadoSimulacion = {
+  parametros: ParametrosSimulacion;
+  serie: { dia: number; saldo: number; consumo: number; recarga: number; saldoP5?: number; saldoP95?: number }[];
+  indicadores: IndicadoresSimulacion;
+}
+
+export type EscenarioPredefinido = {
+  id: string;
+  nombre: string;
+  descripcion: string;
+  parametro: keyof ParametrosSimulacion | null;
+  cambios: Partial<ParametrosSimulacion>;
+}
+
+export type ComparacionEscenario = EscenarioPredefinido & {
+  indicadores: IndicadoresSimulacion;
+  serie: { dia: number; saldo: number }[];
+}
+
+export function obtenerEscenarios(): Promise<{ base: ParametrosSimulacion; escenarios: EscenarioPredefinido[] }> {
+  return fetchJSON('/simulacion/escenarios');
+}
+
+export function obtenerComparacion(): Promise<ComparacionEscenario[]> {
+  return fetchJSON('/simulacion/comparacion');
+}
+
+export function simular(parametros: Partial<ParametrosSimulacion>): Promise<ResultadoSimulacion> {
+  return fetchJSON('/simulacion', {
+    method: 'POST',
+    body: JSON.stringify(parametros),
+  });
 }

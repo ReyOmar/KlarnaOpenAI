@@ -31,11 +31,19 @@ import type {
   HealthResponse,
   ModeloDistribucion,
 } from "../services/api";
+import Simulador from "./Simulador";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type NavItem = "resumen" | "alertas" | "enrutamiento" | "handoffs" | "configuracion";
+type NavItem = "resumen" | "alertas" | "enrutamiento" | "handoffs" | "simulacion" | "configuracion";
 type Theme = "dark" | "light";
+
+const NAV_ITEMS: NavItem[] = ["resumen", "alertas", "enrutamiento", "handoffs", "simulacion", "configuracion"];
+
+function navDesdeHash(): NavItem {
+  const hash = window.location.hash.replace("#", "") as NavItem;
+  return NAV_ITEMS.includes(hash) ? hash : "resumen";
+}
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
@@ -125,6 +133,16 @@ function IconMoon({ size = 16, className = "" }: { size?: number; className?: st
   );
 }
 
+function IconSimulation({ size = 16, className = "" }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" className={className}>
+      <path d="M1.5 14.5h13" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      <path d="M2.5 11.5l3.5-4 3 2.5 4.5-6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M2.5 9l3.5-1.5 3 3 4.5-1" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="1.5 1.5" />
+    </svg>
+  );
+}
+
 function IconChat({ size = 16, className = "" }: { size?: number; className?: string }) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" className={className}>
@@ -159,7 +177,12 @@ function CustomTooltip({ active, payload, label, isDark }: any) {
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const [activeNav, setActiveNav] = useState<NavItem>("resumen");
+  const [activeNav, setActiveNavState] = useState<NavItem>(navDesdeHash);
+  // La pestaña activa se refleja en la URL (/admin#simulacion) para poder enlazarla
+  const setActiveNav = (item: NavItem) => {
+    setActiveNavState(item);
+    window.history.replaceState(null, "", `#${item}`);
+  };
   const [theme, setTheme] = useState<Theme>("dark");
   const [alertThreshold, setAlertThreshold] = useState(2000);
   const [monthlyBudget, setMonthlyBudget] = useState(20000);
@@ -202,6 +225,7 @@ export default function Dashboard() {
     { id: "alertas", label: "Alertas", icon: <IconAlert size={16} /> },
     { id: "enrutamiento", label: "Enrutamiento", icon: <IconRoute size={16} /> },
     { id: "handoffs", label: "Handoffs", icon: <IconUsers size={16} /> },
+    { id: "simulacion", label: "Simulación", icon: <IconSimulation size={16} /> },
     { id: "configuracion", label: "Configuración", icon: <IconSettings size={16} /> },
   ];
 
@@ -344,7 +368,9 @@ export default function Dashboard() {
     ? { color: "#f87171", label: "Backend sin conexión" }
     : health.ia.proveedor === "simulado"
       ? { color: "#fbbf24", label: "IA simulada" }
-      : health.ia.ultimaLlamada === "error"
+      : health.ia.ultimaLlamada === "respaldo"
+        ? { color: "#fbbf24", label: `${health.ia.proveedor}: usando respaldo` }
+        : health.ia.ultimaLlamada === "error"
         ? { color: "#fbbf24", label: `${health.ia.proveedor}: error` }
         : { color: "#4ade80", label: `${health.ia.proveedor}: ${health.ia.ultimaLlamada === "ok" ? "activo" : "listo"}` };
 
@@ -785,6 +811,7 @@ export default function Dashboard() {
                         fill="url(#balanceGrad)"
                         dot={false}
                         activeDot={{ r: 4, fill: "#a855f7", strokeWidth: 0 }}
+                        isAnimationActive={false}
                       />
                     </AreaChart>
                   </ResponsiveContainer>
@@ -1224,6 +1251,9 @@ export default function Dashboard() {
               </table>
             </div>
           )}
+
+          {/* ── View: Simulación ── */}
+          {activeNav === "simulacion" && <Simulador colors={colors} isDark={isDark} />}
 
           {/* ── View: Configuracion ── */}
           {activeNav === "configuracion" && (

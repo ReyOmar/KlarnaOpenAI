@@ -14,6 +14,7 @@ import alertasRouter from './routes/alertas';
 import handoffsRouter from './routes/handoffs';
 import modelosRouter from './routes/modelos';
 import configuracionRouter from './routes/configuracion';
+import simulacionRouter from './routes/simulacion';
 import { asegurarDatosBase } from './services/datosBase';
 import { infoIA } from './services/ia';
 
@@ -33,6 +34,7 @@ app.use('/api/alertas', alertasRouter);
 app.use('/api/handoffs', handoffsRouter);
 app.use('/api/modelos', modelosRouter);
 app.use('/api/configuracion', configuracionRouter);
+app.use('/api/simulacion', simulacionRouter);
 
 // Health check: estado del servidor, la base de datos y el proveedor de IA
 app.get('/api/health', async (_req, res) => {
