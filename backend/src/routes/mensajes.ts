@@ -213,6 +213,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
       _debug: {
         modelo: modelo.nombre,
         modeloApi: respuestaIA.modeloUsado,
+        proveedor: respuestaIA.proveedorUsado,
         motivo: clasificacion.motivo,
         tokensEntrada: respuestaIA.tokensEntrada,
         tokensSalida: respuestaIA.tokensSalida,

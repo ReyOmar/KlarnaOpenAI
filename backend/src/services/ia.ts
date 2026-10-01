@@ -3,14 +3,20 @@
 // Gemini, OpenRouter, LM Studio...). Solo cambia la baseURL, la clave y el modelo.
 // NOTA: "Terra" y "Luna" son nombres internos del proyecto (ver spec sección 2):
 // Terra = modelo capaz, Luna = modelo económico.
+//
+// Cada nivel puede usar un proveedor distinto (AI_PROVIDER_TERRA / AI_PROVIDER_LUNA).
+// Si el proveedor de un nivel falla, se intenta con el proveedor del otro nivel
+// (respaldo cruzado) y, como último recurso, se responde en modo simulado.
 
 import OpenAI from 'openai';
 import { estimarTokensEntrada } from './consumo';
 
 export type NivelModelo = 'terra' | 'luna';
+const NIVELES: NivelModelo[] = ['terra', 'luna'];
 
 export const PROVEEDORES = ['openai', 'ollama', 'groq', 'gemini', 'custom', 'simulado'] as const;
 export type Proveedor = (typeof PROVEEDORES)[number];
+type ProveedorReal = Exclude<Proveedor, 'simulado'>;
 
 type ParametroTokens = 'max_tokens' | 'max_completion_tokens' | null;
 
@@ -24,8 +30,8 @@ interface Preset {
 }
 
 // Valores por defecto de cada proveedor. Se pueden sobrescribir con
-// AI_BASE_URL, AI_MODEL_TERRA y AI_MODEL_LUNA.
-const PRESETS: Record<Exclude<Proveedor, 'simulado'>, Preset> = {
+// AI_BASE_URL(_TERRA|_LUNA), AI_MODEL_TERRA y AI_MODEL_LUNA.
+const PRESETS: Record<ProveedorReal, Preset> = {
   openai: {
     terra: 'gpt-4o',
     luna: 'gpt-4o-mini',
@@ -41,8 +47,9 @@ const PRESETS: Record<Exclude<Proveedor, 'simulado'>, Preset> = {
   },
   groq: {
     baseURL: 'https://api.groq.com/openai/v1',
-    terra: 'llama-3.3-70b-versatile',
-    luna: 'llama-3.1-8b-instant',
+    // En 2026 Groq retiró los modelos Llama 3.x; Qwen 3.8 es el modelo de chat disponible
+    terra: 'qwen/qwen3.8-27b',
+    luna: 'qwen/qwen3.8-27b',
     parametroTokens: 'max_completion_tokens',
     requiereApiKey: true,
   },
@@ -64,29 +71,64 @@ const PRESETS: Record<Exclude<Proveedor, 'simulado'>, Preset> = {
   },
 };
 
-export interface ConfigIA {
-  proveedor: Proveedor;
+/** Configuración de un proveedor concreto para un nivel. */
+export interface ConfigProveedor {
+  proveedor: ProveedorReal;
   baseURL?: string;
-  apiKey?: string;
-  modelos: Record<NivelModelo, string>;
+  apiKey: string;
+  modelo: string;
   parametroTokens: ParametroTokens;
+  extra: Record<string, unknown>;
+}
+
+export interface ConfigIA {
+  /** Etiqueta legible: "gemini", "gemini + groq" o "simulado". */
+  proveedor: string;
+  /** Proveedor principal de cada nivel (null = modo simulado). */
+  niveles: Record<NivelModelo, ConfigProveedor | null>;
+  /** Proveedor de respaldo de cada nivel (el del otro nivel, si es distinto). */
+  respaldo: Record<NivelModelo, ConfigProveedor | null>;
+  modelos: Record<NivelModelo, string>;
   maxTokens: number;
   timeoutMs: number;
   fallbackSimulado: boolean;
-  extra: Record<string, unknown>;
   advertencia?: string;
 }
 
-function configSimulada(advertencia?: string, fallbackSimulado = true): ConfigIA {
+const NOMBRE_ENV: Record<NivelModelo, string> = { terra: 'TERRA', luna: 'LUNA' };
+
+/**
+ * Resuelve el proveedor de un nivel. Devuelve null (modo simulado) y una
+ * advertencia si la configuración es inválida o falta la API key.
+ */
+function resolverProveedor(
+  proveedor: ProveedorReal,
+  nivel: NivelModelo,
+  env: NodeJS.ProcessEnv,
+  { usarOverrides }: { usarOverrides: boolean }
+): { config: ConfigProveedor | null; advertencia?: string } {
+  const preset = PRESETS[proveedor];
+  const sufijo = NOMBRE_ENV[nivel];
+
+  const apiKey =
+    env[`${proveedor.toUpperCase()}_API_KEY`] ||
+    env.AI_API_KEY ||
+    (preset.requiereApiKey ? undefined : 'no-requerida');
+  if (!apiKey) {
+    return { config: null, advertencia: `${nivel}: el proveedor "${proveedor}" requiere ${proveedor.toUpperCase()}_API_KEY.` };
+  }
+
+  // Los overrides de URL y modelo solo aplican al proveedor elegido para el nivel,
+  // no al proveedor que se usa como respaldo.
+  const baseURL = (usarOverrides && (env[`AI_BASE_URL_${sufijo}`] || env.AI_BASE_URL)) || preset.baseURL;
+  const modelo = (usarOverrides && env[`AI_MODEL_${sufijo}`]) || preset[nivel];
+
+  if (proveedor === 'custom' && (!baseURL || !modelo)) {
+    return { config: null, advertencia: `${nivel}: el proveedor "custom" requiere AI_BASE_URL y AI_MODEL_${sufijo}.` };
+  }
+
   return {
-    proveedor: 'simulado',
-    modelos: { terra: 'simulado-terra', luna: 'simulado-luna' },
-    parametroTokens: null,
-    maxTokens: 0,
-    timeoutMs: 0,
-    fallbackSimulado,
-    extra: {},
-    advertencia,
+    config: { proveedor, baseURL, apiKey, modelo, parametroTokens: preset.parametroTokens, extra: preset.extra ?? {} },
   };
 }
 
@@ -94,68 +136,72 @@ function configSimulada(advertencia?: string, fallbackSimulado = true): ConfigIA
  * Resuelve la configuración de IA a partir de variables de entorno.
  * Función pura (recibe el env) para poder probarla sin efectos secundarios.
  *
- * Compatibilidad: si no se define AI_PROVIDER pero existe OPENAI_API_KEY,
- * se usa OpenAI como antes.
+ * - AI_PROVIDER define el proveedor de ambos niveles.
+ * - AI_PROVIDER_TERRA / AI_PROVIDER_LUNA lo sobrescriben por nivel.
+ * - Compatibilidad: sin AI_PROVIDER pero con OPENAI_API_KEY se usa OpenAI.
  */
 export function resolverConfigIA(env: NodeJS.ProcessEnv = process.env): ConfigIA {
-  const valor = (env.AI_PROVIDER || '').trim().toLowerCase();
   const fallbackSimulado = env.AI_FALLBACK_SIMULADO !== 'false';
+  const respaldoCruzado = env.AI_RESPALDO_CRUZADO !== 'false';
+  const advertencias: string[] = [];
 
-  let proveedor: Proveedor;
-  if (!valor) {
-    proveedor = env.OPENAI_API_KEY ? 'openai' : 'simulado';
-  } else if ((PROVEEDORES as readonly string[]).includes(valor)) {
-    proveedor = valor as Proveedor;
-  } else {
-    return configSimulada(
-      `AI_PROVIDER="${valor}" no es válido. Usa uno de: ${PROVEEDORES.join(', ')}.`,
-      fallbackSimulado
-    );
+  const general = (env.AI_PROVIDER || '').trim().toLowerCase();
+  const porDefecto = general || (env.OPENAI_API_KEY ? 'openai' : 'simulado');
+
+  const elegidos = {} as Record<NivelModelo, string>;
+  const niveles = {} as Record<NivelModelo, ConfigProveedor | null>;
+
+  for (const nivel of NIVELES) {
+    const especifico = (env[`AI_PROVIDER_${NOMBRE_ENV[nivel]}`] || '').trim().toLowerCase();
+    const elegido = especifico || porDefecto;
+    elegidos[nivel] = elegido;
+
+    if (!(PROVEEDORES as readonly string[]).includes(elegido)) {
+      advertencias.push(`${nivel}: "${elegido}" no es un proveedor válido. Usa uno de: ${PROVEEDORES.join(', ')}.`);
+      niveles[nivel] = null;
+    } else if (elegido === 'simulado') {
+      niveles[nivel] = null;
+    } else {
+      const r = resolverProveedor(elegido as ProveedorReal, nivel, env, { usarOverrides: true });
+      if (r.advertencia) advertencias.push(r.advertencia);
+      niveles[nivel] = r.config;
+    }
   }
 
-  if (proveedor === 'simulado') {
-    return configSimulada(
-      valor ? undefined : 'No hay proveedor de IA configurado; se usan respuestas simuladas.',
-      fallbackSimulado
-    );
+  // Respaldo cruzado: si un nivel usa un proveedor y el otro nivel uno distinto,
+  // el del otro nivel (con su modelo por defecto para este nivel) sirve de respaldo.
+  const respaldo = { terra: null, luna: null } as Record<NivelModelo, ConfigProveedor | null>;
+  if (respaldoCruzado) {
+    for (const nivel of NIVELES) {
+      const otro = niveles[nivel === 'terra' ? 'luna' : 'terra'];
+      if (otro && otro.proveedor !== niveles[nivel]?.proveedor) {
+        respaldo[nivel] = resolverProveedor(otro.proveedor, nivel, env, { usarOverrides: false }).config;
+      }
+    }
   }
 
-  const preset = PRESETS[proveedor];
-  const apiKey =
-    env.AI_API_KEY ||
-    (proveedor === 'openai' ? env.OPENAI_API_KEY : undefined) ||
-    (preset.requiereApiKey ? undefined : 'no-requerida');
-
-  if (!apiKey) {
-    return configSimulada(`El proveedor "${proveedor}" requiere AI_API_KEY.`, fallbackSimulado);
+  if (!niveles.terra && !niveles.luna && !general && !env.AI_PROVIDER_TERRA && !env.AI_PROVIDER_LUNA && !env.OPENAI_API_KEY) {
+    advertencias.push('No hay proveedor de IA configurado; se usan respuestas simuladas.');
   }
 
-  const baseURL = env.AI_BASE_URL || preset.baseURL;
-  const modelos = {
-    terra: env.AI_MODEL_TERRA || preset.terra,
-    luna: env.AI_MODEL_LUNA || preset.luna,
-  };
-
-  if (proveedor === 'custom' && (!baseURL || !modelos.terra || !modelos.luna)) {
-    return configSimulada(
-      'El proveedor "custom" requiere AI_BASE_URL, AI_MODEL_TERRA y AI_MODEL_LUNA.',
-      fallbackSimulado
-    );
-  }
+  const etiqueta = (n: NivelModelo) => niveles[n]?.proveedor ?? 'simulado';
+  const proveedor = etiqueta('terra') === etiqueta('luna') ? etiqueta('terra') : `${etiqueta('terra')} + ${etiqueta('luna')}`;
 
   const maxTokens = parseInt(env.AI_MAX_TOKENS || '', 10);
   const timeoutMs = parseInt(env.AI_TIMEOUT_MS || '', 10);
 
   return {
     proveedor,
-    baseURL,
-    apiKey,
-    modelos,
-    parametroTokens: preset.parametroTokens,
+    niveles,
+    respaldo,
+    modelos: {
+      terra: niveles.terra?.modelo ?? 'simulado-terra',
+      luna: niveles.luna?.modelo ?? 'simulado-luna',
+    },
     maxTokens: Number.isFinite(maxTokens) && maxTokens > 0 ? maxTokens : 800,
     timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 60000,
     fallbackSimulado,
-    extra: preset.extra ?? {},
+    advertencia: advertencias.length ? advertencias.join(' ') : undefined,
   };
 }
 
@@ -163,32 +209,37 @@ export function resolverConfigIA(env: NodeJS.ProcessEnv = process.env): ConfigIA
 
 const config = resolverConfigIA();
 
-const cliente =
-  config.proveedor === 'simulado'
-    ? null
-    : new OpenAI({
-        apiKey: config.apiKey,
-        baseURL: config.baseURL,
-        timeout: config.timeoutMs,
-        maxRetries: 1,
-      });
+const clientes = new Map<string, OpenAI>();
+function clientePara(p: ConfigProveedor): OpenAI {
+  const clave = `${p.baseURL ?? 'openai'}|${p.apiKey}`;
+  let cliente = clientes.get(clave);
+  if (!cliente) {
+    cliente = new OpenAI({ apiKey: p.apiKey, baseURL: p.baseURL, timeout: config.timeoutMs, maxRetries: 1 });
+    clientes.set(clave, cliente);
+  }
+  return cliente;
+}
 
-type EstadoUltimaLlamada = 'sin-uso' | 'ok' | 'error' | 'simulado';
+type EstadoUltimaLlamada = 'sin-uso' | 'ok' | 'respaldo' | 'error' | 'simulado';
 
+const hayProveedor = Boolean(config.niveles.terra || config.niveles.luna);
 const estado: { ultimo: EstadoUltimaLlamada; error?: string; fecha?: string } = {
-  ultimo: config.proveedor === 'simulado' ? 'simulado' : 'sin-uso',
+  ultimo: hayProveedor ? 'sin-uso' : 'simulado',
 };
 
 export function obtenerConfigIA(): Readonly<ConfigIA> {
   return config;
 }
 
-/** Información pública del proveedor (sin la API key). */
+const describir = (p: ConfigProveedor | null) => (p ? { proveedor: p.proveedor, modelo: p.modelo, baseURL: p.baseURL ?? null } : null);
+
+/** Información pública del proveedor (sin las API keys). */
 export function infoIA() {
   return {
     proveedor: config.proveedor,
-    baseURL: config.baseURL ?? null,
     modelos: config.modelos,
+    niveles: { terra: describir(config.niveles.terra), luna: describir(config.niveles.luna) },
+    respaldo: { terra: describir(config.respaldo.terra), luna: describir(config.respaldo.luna) },
     fallbackSimulado: config.fallbackSimulado,
     advertencia: config.advertencia ?? null,
     ultimaLlamada: estado.ultimo,
@@ -219,76 +270,90 @@ export interface RespuestaIA {
   tokensEntrada: number;
   tokensSalida: number;
   modeloUsado: string;
+  proveedorUsado: string;
   simulado: boolean;
 }
 
 export type MensajeHistorial = { role: 'user' | 'assistant'; content: string };
 
+/** Llama a un proveedor concreto, sin respaldo. Lanza un error si falla. */
+export async function llamarProveedor(
+  p: ConfigProveedor,
+  mensajeUsuario: string,
+  historial: MensajeHistorial[]
+): Promise<RespuestaIA> {
+  const params: Record<string, unknown> = {
+    model: p.modelo,
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT },
+      ...historial,
+      { role: 'user', content: mensajeUsuario },
+    ],
+    ...p.extra,
+  };
+  if (p.parametroTokens) {
+    params[p.parametroTokens] = config.maxTokens;
+  }
+
+  const completion = await clientePara(p).chat.completions.create(
+    params as unknown as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming
+  );
+
+  // Algunos modelos locales (deepseek-r1, qwen3) incluyen su razonamiento en <think>
+  const contenido = limpiarRespuesta(completion.choices[0]?.message?.content);
+  if (!contenido) {
+    throw new Error('El modelo devolvió una respuesta vacía');
+  }
+
+  return {
+    contenido,
+    tokensEntrada: completion.usage?.prompt_tokens || estimarTokensEntrada(mensajeUsuario),
+    tokensSalida: completion.usage?.completion_tokens || Math.ceil(contenido.length / 4),
+    modeloUsado: p.modelo,
+    proveedorUsado: p.proveedor,
+    simulado: false,
+  };
+}
+
 /**
- * Envía el mensaje al modelo correspondiente al nivel (Terra/Luna) y devuelve
- * la respuesta con el uso de tokens. Si el proveedor falla (sin créditos, sin
- * red, modelo inexistente...) y AI_FALLBACK_SIMULADO no es "false", responde
- * con una respuesta simulada para que el prototipo siga funcionando.
+ * Envía el mensaje al proveedor del nivel (Terra/Luna). Si falla, prueba con el
+ * proveedor de respaldo; si ambos fallan y AI_FALLBACK_SIMULADO no es "false",
+ * responde con una respuesta simulada para que el prototipo siga funcionando.
  */
 export async function generarRespuesta(
   mensajeUsuario: string,
   historial: MensajeHistorial[],
   nivel: NivelModelo
 ): Promise<RespuestaIA> {
-  if (!cliente) {
+  const intentos = [config.niveles[nivel], config.respaldo[nivel]].filter((p): p is ConfigProveedor => p !== null);
+  if (intentos.length === 0) {
     return respuestaSimulada(mensajeUsuario, nivel);
   }
 
-  const modelo = config.modelos[nivel];
-
-  try {
-    const params: Record<string, unknown> = {
-      model: modelo,
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        ...historial,
-        { role: 'user', content: mensajeUsuario },
-      ],
-      ...config.extra,
-    };
-    if (config.parametroTokens) {
-      params[config.parametroTokens] = config.maxTokens;
+  const errores: string[] = [];
+  for (const [i, p] of intentos.entries()) {
+    try {
+      const respuesta = await llamarProveedor(p, mensajeUsuario, historial);
+      estado.ultimo = i === 0 ? 'ok' : 'respaldo';
+      estado.error = i === 0 ? undefined : errores.join(' | ');
+      estado.fecha = new Date().toISOString();
+      return respuesta;
+    } catch (error: unknown) {
+      const mensaje = error instanceof Error ? error.message : String(error);
+      errores.push(`${p.proveedor}/${p.modelo}: ${mensaje}`);
+      console.warn(`[IA ${nivel}] ${p.proveedor}/${p.modelo} falló: ${mensaje}`);
     }
-
-    const completion = await cliente.chat.completions.create(
-      params as unknown as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming
-    );
-
-    // Algunos modelos locales (deepseek-r1, qwen3) incluyen su razonamiento en <think>
-    const contenido = limpiarRespuesta(completion.choices[0]?.message?.content);
-    if (!contenido) {
-      throw new Error('El modelo devolvió una respuesta vacía');
-    }
-
-    estado.ultimo = 'ok';
-    estado.error = undefined;
-    estado.fecha = new Date().toISOString();
-
-    return {
-      contenido,
-      tokensEntrada: completion.usage?.prompt_tokens || estimarTokensEntrada(mensajeUsuario),
-      tokensSalida: completion.usage?.completion_tokens || Math.ceil(contenido.length / 4),
-      modeloUsado: modelo,
-      simulado: false,
-    };
-  } catch (error: unknown) {
-    const mensaje = error instanceof Error ? error.message : String(error);
-    estado.ultimo = 'error';
-    estado.error = mensaje;
-    estado.fecha = new Date().toISOString();
-
-    if (!config.fallbackSimulado) {
-      throw error;
-    }
-
-    console.warn(`[IA ${config.proveedor}/${modelo}] ${mensaje} → usando respuesta simulada.`);
-    return respuestaSimulada(mensajeUsuario, nivel);
   }
+
+  estado.ultimo = 'error';
+  estado.error = errores.join(' | ');
+  estado.fecha = new Date().toISOString();
+
+  if (!config.fallbackSimulado) {
+    throw new Error(estado.error);
+  }
+  console.warn(`[IA ${nivel}] sin proveedores disponibles → usando respuesta simulada.`);
+  return respuestaSimulada(mensajeUsuario, nivel);
 }
 
 export function limpiarRespuesta(texto: string | null | undefined): string {
@@ -325,6 +390,7 @@ export function respuestaSimulada(mensajeUsuario: string, nivel: NivelModelo): R
     tokensEntrada: estimarTokensEntrada(mensajeUsuario),
     tokensSalida: Math.ceil(contenido.length / 4),
     modeloUsado: `simulado-${nivel}`,
+    proveedorUsado: 'simulado',
     simulado: true,
   };
 }

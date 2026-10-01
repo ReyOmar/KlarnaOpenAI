@@ -23,8 +23,13 @@ services:
         fromDatabase:
           name: klarna-openai-db
           property: connectionString
-      # Proveedor de IA: groq o gemini tienen plan gratuito (ollama solo funciona en local)
-      - key: AI_PROVIDER
+      # Terra (consultas complejas) con Gemini y Luna (simples) con Groq;
+      # cada proveedor sirve de respaldo automático del otro.
+      - key: AI_PROVIDER_TERRA
+        value: gemini
+      - key: AI_PROVIDER_LUNA
         value: groq
-      - key: AI_API_KEY
-        sync: false # se pide al crear el Blueprint
+      - key: GEMINI_API_KEY
+        sync: false # Render la pide al crear el Blueprint
+      - key: GROQ_API_KEY
+        sync: false
