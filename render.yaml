@@ -33,3 +33,8 @@ services:
         sync: false # Render la pide al crear el Blueprint
       - key: GROQ_API_KEY
         sync: false
+      # Login con Clerk. La publicable también la usa el build del frontend.
+      - key: CLERK_PUBLISHABLE_KEY
+        sync: false
+      - key: CLERK_SECRET_KEY
+        sync: false

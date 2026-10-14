@@ -248,8 +248,12 @@ export function infoIA() {
   };
 }
 
-// System prompt contextualizado al caso Klarna
-const SYSTEM_PROMPT = `Eres un asistente virtual de atención al cliente de una empresa fintech de pagos (tipo Klarna).
+// System prompt contextualizado al caso Klarna. El cliente ya inició sesión (Clerk),
+// así que el asistente no debe pedirle que entre a la web o a la app.
+export function promptSistema(nombreUsuario?: string): string {
+  return `Eres un asistente virtual de atención al cliente de una empresa fintech de pagos (tipo Klarna).
+
+El cliente ya inició sesión en este chat y su identidad está verificada${nombreUsuario ? `; se llama ${nombreUsuario}` : ''}. Lo atiendes aquí mismo.
 
 Tu alcance de responsabilidades:
 - Gestión de pagos: agendar, extender plazos, ajustar planes de cuotas
@@ -261,9 +265,11 @@ Tu alcance de responsabilidades:
 Reglas:
 - Responde siempre en el mismo idioma que el usuario.
 - Sé conciso (máximo 4 frases), amable y profesional.
-- No inventes información sobre pedidos o pagos específicos — si no tienes datos, indica que verificarás.
+- Nunca le pidas iniciar sesión, entrar a la web o a la app, ni verificar su identidad: ya lo hizo. Resuelve todo en este chat.
+- No inventes información sobre pedidos o pagos específicos — si no tienes datos, pide el dato que falte (número de pedido, comercio, fecha) o indica que lo verificarás.
 - No menciones que eres un modelo de IA específico ni nombres técnicos de modelos.
 - Si el usuario necesita algo fuera de tu alcance, sugiere amablemente que puede hablar con un representante humano.`;
+}
 
 export interface RespuestaIA {
   contenido: string;
@@ -280,12 +286,13 @@ export type MensajeHistorial = { role: 'user' | 'assistant'; content: string };
 export async function llamarProveedor(
   p: ConfigProveedor,
   mensajeUsuario: string,
-  historial: MensajeHistorial[]
+  historial: MensajeHistorial[],
+  nombreUsuario?: string
 ): Promise<RespuestaIA> {
   const params: Record<string, unknown> = {
     model: p.modelo,
     messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: promptSistema(nombreUsuario) },
       ...historial,
       { role: 'user', content: mensajeUsuario },
     ],
@@ -323,7 +330,8 @@ export async function llamarProveedor(
 export async function generarRespuesta(
   mensajeUsuario: string,
   historial: MensajeHistorial[],
-  nivel: NivelModelo
+  nivel: NivelModelo,
+  nombreUsuario?: string
 ): Promise<RespuestaIA> {
   const intentos = [config.niveles[nivel], config.respaldo[nivel]].filter((p): p is ConfigProveedor => p !== null);
   if (intentos.length === 0) {
@@ -333,7 +341,7 @@ export async function generarRespuesta(
   const errores: string[] = [];
   for (const [i, p] of intentos.entries()) {
     try {
-      const respuesta = await llamarProveedor(p, mensajeUsuario, historial);
+      const respuesta = await llamarProveedor(p, mensajeUsuario, historial, nombreUsuario);
       estado.ultimo = i === 0 ? 'ok' : 'respaldo';
       estado.error = i === 0 ? undefined : errores.join(' | ');
       estado.fecha = new Date().toISOString();
@@ -371,14 +379,14 @@ export function respuestaSimulada(mensajeUsuario: string, nivel: NivelModelo): R
     .replace(/[̀-ͯ]/g, '');
 
   let contenido =
-    'Entiendo tu consulta. Puedes dividir tus compras en 3 o 4 cuotas sin intereses, consultar el estado de tus pedidos o adelantar pagos directamente desde la app.';
+    'Entiendo tu consulta. Desde este chat puedo ayudarte a dividir tus compras en 3 o 4 cuotas sin intereses, revisar el estado de tus pedidos o adelantar pagos.';
 
   if (/(pago|cuota|pagar|deuda|plazo)/.test(lower)) {
-    contenido = 'Tu próximo pago está programado para el siguiente ciclo de facturación. Puedes pagarlo ahora con tarjeta de débito o crédito, o postergarlo hasta 14 días sin cargos adicionales desde la sección de Pagos.';
+    contenido = 'Tu próximo pago está programado para el siguiente ciclo de facturación. Puedo ayudarte a pagarlo ahora o a postergarlo hasta 14 días sin cargos adicionales. ¿Cuál prefieres?';
   } else if (/(devol|reembols|retorn)/.test(lower)) {
-    contenido = 'Para gestionar una devolución, primero notifica a la tienda donde compraste y luego regístrala en la app. Pausaremos tus cuotas mientras el comercio procesa la recepción de los artículos.';
+    contenido = 'Para gestionar una devolución, primero notifica a la tienda donde compraste y luego indícame el comercio y la fecha de la compra para registrarla. Pausaremos tus cuotas mientras el comercio procesa la recepción de los artículos.';
   } else if (/(pedido|envio|entrega|orden)/.test(lower)) {
-    contenido = 'Puedes ver el estado de tu pedido en la sección "Compras" de la app. Si el comercio ya lo despachó, allí encontrarás el número de seguimiento.';
+    contenido = 'Con gusto reviso tu pedido. Indícame el comercio o el número de pedido; si ya fue despachado, te comparto el número de seguimiento.';
   } else if (/(denegad|rechaz|aprobar|negaron)/.test(lower)) {
     contenido = 'Cada solicitud de compra se evalúa individualmente considerando tu historial y el monto solicitado. Te recomendamos verificar que tus datos de pago estén actualizados.';
   } else if (/\b(hola|buenas|buenos dias)\b/.test(lower)) {

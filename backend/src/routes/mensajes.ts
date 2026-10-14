@@ -10,7 +10,8 @@ import { calcularRecargaDiaria } from '../services/saldo';
 import { asegurarSaldoDeHoy, registrarConsumoDiario } from '../services/saldoDiario';
 import { evaluarYRegistrarAlerta } from '../services/alertas';
 import { obtenerConfiguracion } from '../services/configuracion';
-import { obtenerUsuarioDemo } from '../services/datosBase';
+import { obtenerUsuarioClerk } from '../services/usuarios';
+import { getAuth } from '@clerk/express';
 
 const router = Router();
 
@@ -18,14 +19,13 @@ const MAX_LONGITUD_MENSAJE = 2000;
 const MENSAJES_DE_CONTEXTO = 20;
 
 interface MensajeBody {
-  userId?: number;
   conversacionId?: number;
   contenido?: unknown;
 }
 
 router.post('/', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { userId, conversacionId, contenido: contenidoRaw } = (req.body ?? {}) as MensajeBody;
+    const { conversacionId, contenido: contenidoRaw } = (req.body ?? {}) as MensajeBody;
     const contenido = typeof contenidoRaw === 'string' ? contenidoRaw.trim() : '';
 
     if (!contenido) {
@@ -37,23 +37,20 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // 1. Obtener o crear conversación
+    // 1. Obtener o crear la conversación del usuario de la sesión de Clerk
+    //    (requiereSesion ya garantizó el userId; solo se continúan conversaciones propias)
+    const usuario = await obtenerUsuarioClerk(getAuth(req).userId!);
     let conversacion;
     if (conversacionId) {
       conversacion = await prisma.conversacion.findUnique({
         where: { id: Number(conversacionId) },
         include: { handoff: { include: { agente: true } } },
       });
-      if (!conversacion) {
+      if (!conversacion || conversacion.idUsuario !== usuario.id) {
         res.status(404).json({ error: 'Conversación no encontrada' });
         return;
       }
     } else {
-      // El prototipo no tiene login: si el usuario no existe se usa el usuario demo
-      const usuario =
-        (userId && (await prisma.usuario.findUnique({ where: { id: Number(userId) } }))) ||
-        (await obtenerUsuarioDemo());
-
       conversacion = await prisma.conversacion.create({
         data: { idUsuario: usuario.id },
         include: { handoff: { include: { agente: true } } },
@@ -165,7 +162,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
       content: m.contenido,
     }));
 
-    const respuestaIA = await generarRespuesta(contenido, historial, clasificacion.tipo);
+    const respuestaIA = await generarRespuesta(contenido, historial, clasificacion.tipo, usuario.nombre);
 
     // 7. Guardar mensaje de respuesta
     const mensajeRespuesta = await prisma.mensaje.create({

@@ -4,10 +4,21 @@
 // Si el frontend se despliega en otro dominio, define VITE_API_URL=https://mi-backend.com
 const API_BASE = `${(import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '')}/api`;
 
+// Token de sesión de Clerk; App.tsx registra la función al iniciar sesión
+let obtenerToken: () => Promise<string | null> = async () => null;
+
+export function configurarToken(fn: () => Promise<string | null>) {
+  obtenerToken = fn;
+}
+
 async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
+  const token = await obtenerToken();
   const response = await fetch(`${API_BASE}${url}`, {
-    headers: { 'Content-Type': 'application/json' },
     ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
   });
 
   if (!response.ok) {
@@ -43,10 +54,11 @@ export type MensajeResponse = {
   };
 }
 
-export function enviarMensaje(userId: number, contenido: string, conversacionId?: number | null): Promise<MensajeResponse> {
+// El usuario se toma de la sesión de Clerk en el backend
+export function enviarMensaje(contenido: string, conversacionId?: number | null): Promise<MensajeResponse> {
   return fetchJSON('/mensajes', {
     method: 'POST',
-    body: JSON.stringify({ userId, contenido, conversacionId: conversacionId ?? undefined }),
+    body: JSON.stringify({ contenido, conversacionId: conversacionId ?? undefined }),
   });
 }
 

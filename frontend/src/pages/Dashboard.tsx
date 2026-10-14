@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import { UserButton } from "@clerk/react";
 import {
   AreaChart,
   Area,
@@ -667,6 +668,9 @@ export default function Dashboard() {
             >
               KL
             </div>
+
+            {/* Cuenta del usuario (Clerk): perfil y cerrar sesión */}
+            <UserButton />
           </div>
         </header>
 

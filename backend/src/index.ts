@@ -8,6 +8,7 @@ import fs from 'fs';
 import path from 'path';
 
 import prisma from './db/prisma';
+import { clerk, requiereSesion } from './middleware/auth';
 import mensajesRouter from './routes/mensajes';
 import saldoRouter from './routes/saldo';
 import alertasRouter from './routes/alertas';
@@ -27,16 +28,10 @@ const PORT = Number(process.env.PORT) || 3001;
 app.use(cors(process.env.CORS_ORIGIN ? { origin: process.env.CORS_ORIGIN.split(',') } : undefined));
 app.use(express.json({ limit: '100kb' }));
 
-// API Routes
-app.use('/api/mensajes', mensajesRouter);
-app.use('/api/saldo', saldoRouter);
-app.use('/api/alertas', alertasRouter);
-app.use('/api/handoffs', handoffsRouter);
-app.use('/api/modelos', modelosRouter);
-app.use('/api/configuracion', configuracionRouter);
-app.use('/api/simulacion', simulacionRouter);
+// Clerk solo en /api: los archivos del frontend se sirven sin pasar por la autenticación
+app.use('/api', clerk);
 
-// Health check: estado del servidor, la base de datos y el proveedor de IA
+// Health check (público, lo usa Render): estado del servidor, la base de datos y el proveedor de IA
 app.get('/api/health', async (_req, res) => {
   let baseDatos = true;
   try {
@@ -52,6 +47,15 @@ app.get('/api/health', async (_req, res) => {
     timestamp: new Date().toISOString(),
   });
 });
+
+// API Routes — requieren sesión iniciada en Clerk
+app.use('/api/mensajes', requiereSesion, mensajesRouter);
+app.use('/api/saldo', requiereSesion, saldoRouter);
+app.use('/api/alertas', requiereSesion, alertasRouter);
+app.use('/api/handoffs', requiereSesion, handoffsRouter);
+app.use('/api/modelos', requiereSesion, modelosRouter);
+app.use('/api/configuracion', requiereSesion, configuracionRouter);
+app.use('/api/simulacion', requiereSesion, simulacionRouter);
 
 // Rutas /api inexistentes → 404 en JSON
 app.use('/api', (_req, res) => {

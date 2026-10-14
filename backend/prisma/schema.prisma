@@ -18,6 +18,7 @@ model Usuario {
   id             Int            @id @default(autoincrement())
   nombre         String
   email          String         @unique
+  clerkId        String?        @unique @map("clerk_id") // id del usuario en Clerk (login)
   fechaRegistro  DateTime       @default(now()) @map("fecha_registro")
   conversaciones Conversacion[]
 

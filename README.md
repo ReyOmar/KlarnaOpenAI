@@ -75,6 +75,15 @@ AI_PROVIDER=ollama
 
 Con poca RAM (8 GB) se pueden usar modelos más livianos para ambos niveles, por ejemplo `AI_MODEL_TERRA=llama3.2:3b` y `AI_MODEL_LUNA=llama3.2:1b`.
 
+## Login (Clerk)
+
+Toda la app (chat, panel y simulador) requiere iniciar sesión con [Clerk](https://clerk.com). Se necesitan las dos llaves de la aplicación de Clerk (Dashboard → API keys):
+
+- `CLERK_PUBLISHABLE_KEY` (`pk_test_…`): en `backend/.env` y en `frontend/.env`. Es pública; el frontend la incluye en el navegador.
+- `CLERK_SECRET_KEY` (`sk_test_…`): solo en `backend/.env`. Nunca debe subirse al repositorio.
+
+Todas las rutas `/api` salvo `/api/health` responden `401` sin sesión. La primera vez que alguien escribe en el chat se crea su registro en la tabla `usuario` con el nombre y el email de Clerk, y solo puede continuar sus propias conversaciones.
+
 ## Cómo ejecutar en local
 
 Requisitos: Node.js 20 o superior y PostgreSQL.
@@ -82,7 +91,7 @@ Requisitos: Node.js 20 o superior y PostgreSQL.
 ```bash
 # 1. Backend
 cd backend
-cp .env.example .env        # completar DATABASE_URL y AI_PROVIDER
+cp .env.example .env        # completar DATABASE_URL, AI_PROVIDER y las llaves de Clerk
 npm install
 npx prisma migrate dev      # crea las tablas
 npm run db:seed             # datos de ejemplo (30 días de historial)
@@ -90,6 +99,7 @@ npm run dev
 
 # 2. Frontend (otra terminal)
 cd frontend
+cp .env.example .env        # completar CLERK_PUBLISHABLE_KEY
 npm install
 npm run dev
 ```
@@ -122,7 +132,7 @@ npm start       # aplica migraciones, carga los datos de ejemplo si faltan y arr
 
 1. Crea una cuenta en [Render](https://render.com) entrando con tu cuenta de GitHub.
 2. **New → Blueprint** y elige este repositorio. El archivo `render.yaml` crea la base de datos PostgreSQL y el servicio web (ambos en plan gratuito), con Terra en Gemini y Luna en Groq.
-3. Render pedirá `GEMINI_API_KEY` y `GROQ_API_KEY`: pega tus claves y pulsa **Apply**.
+3. Render pedirá `GEMINI_API_KEY`, `GROQ_API_KEY`, `CLERK_PUBLISHABLE_KEY` y `CLERK_SECRET_KEY`: pega tus claves y pulsa **Apply**.
 4. Espera el primer despliegue (unos 5 a 10 minutos). Los datos de ejemplo se cargan solos al arrancar.
 5. Abre la URL del servicio (algo como `https://klarna-openai.onrender.com`) y revisa `/api/health`.
 
@@ -130,7 +140,7 @@ Notas del plan gratuito: el servicio se suspende tras unos 15 minutos sin uso y 
 
 > Ollama no funciona en hostings gratuitos (necesita una máquina con GPU/RAM). Para un despliegue en la nube usa `groq` o `gemini`, o apunta `AI_BASE_URL` a un servidor propio con Ollama.
 
-Railway, Fly.io o un VPS funcionan igual: comando de build `npm run build`, comando de inicio `npm start` y las variables `DATABASE_URL`, `AI_PROVIDER_TERRA`, `AI_PROVIDER_LUNA`, `GEMINI_API_KEY` y `GROQ_API_KEY`.
+Railway, Fly.io o un VPS funcionan igual: comando de build `npm run build`, comando de inicio `npm start` y las variables `DATABASE_URL`, `AI_PROVIDER_TERRA`, `AI_PROVIDER_LUNA`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `CLERK_PUBLISHABLE_KEY` y `CLERK_SECRET_KEY`.
 
 ## Arquitectura
 
@@ -192,7 +202,7 @@ El texto se normaliza (minúsculas, sin tildes) antes de evaluar los patrones. E
 
 ## Limitaciones conocidas (primera versión)
 
-- No hay autenticación: el chat usa un usuario demo y el dashboard es público. No usar con datos reales.
+- No hay roles: cualquier usuario con sesión iniciada puede ver el panel de administración. No usar con datos reales.
 - El router es por reglas (palabras clave); el punto de extensión para un clasificador ML está en `backend/src/services/router.ts`.
 - Los agentes humanos se simulan: el handoff asigna al primer agente disponible, pero no existe una bandeja para que el agente responda.
 - El dashboard está pensado para escritorio; en móviles se ve comprimido.

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { UserButton } from "@clerk/react";
 import { enviarMensaje } from "../services/api";
 import type { MensajeResponse } from "../services/api";
 
@@ -478,7 +479,6 @@ export default function Chat() {
   const nextLocalId = (prefix: string) => `${prefix}-${++localIdRef.current}`;
 
   const t = isDark ? dark : light;
-  const userId = 1;
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -500,7 +500,7 @@ export default function Chat() {
     setIsTyping(true);
 
     try {
-      const response: MensajeResponse = await enviarMensaje(userId, query, conversacionId);
+      const response: MensajeResponse = await enviarMensaje(query, conversacionId);
 
       setConversacionId(response.conversacionId);
 
@@ -696,6 +696,9 @@ export default function Chat() {
               <IconDashboard size={13} />
               Dashboard Admin
             </button>
+
+            {/* Cuenta del usuario (Clerk): perfil y cerrar sesión */}
+            <UserButton />
           </div>
         </header>
 
