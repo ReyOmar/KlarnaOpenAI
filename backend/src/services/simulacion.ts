@@ -55,21 +55,28 @@ export const PARAMETROS_BASE: ParametrosSimulacion = {
 
 export interface EscenarioPredefinido {
   id: string;
+  tipo: 'decision' | 'aleatoria' | 'extrema';
   nombre: string;
   descripcion: string;
   parametro: keyof ParametrosSimulacion | null;
   cambios: Partial<ParametrosSimulacion>;
 }
 
-// Cada escenario modifica UN solo parámetro respecto del base, para comparar con sentido.
+// Corridas de las Tablas 4 a 6 del informe de simulación en Vensim. Cada escenario de
+// decisión modifica UN solo parámetro respecto del base, para comparar con sentido; las
+// pruebas extremas (X1–X4) llevan parámetros a valores límite para validar el modelo.
 export const ESCENARIOS: EscenarioPredefinido[] = [
-  { id: 'E0', nombre: 'Base', descripcion: 'Enrutador activo (30 % Terra, 10 % handoff) y presupuesto de USD 6.000/mes', parametro: null, cambios: {} },
-  { id: 'E1', nombre: 'Sin enrutamiento', descripcion: 'Todas las consultas de IA van a Terra', parametro: 'porcentajeTerra', cambios: { porcentajeTerra: 100 } },
-  { id: 'E2', nombre: 'Demanda duplicada', descripcion: 'Temporada alta sostenida: el volumen diario se duplica', parametro: 'conversacionesDiarias', cambios: { conversacionesDiarias: 153_334 } },
-  { id: 'E3', nombre: 'Crecimiento de demanda', descripcion: 'Expansión a nuevos mercados: la demanda crece 20 % cada mes', parametro: 'crecimientoMensualPct', cambios: { crecimientoMensualPct: 20 } },
-  { id: 'E4', nombre: 'Alza de precios', descripcion: 'El proveedor sube 50 % el precio por token', parametro: 'factorPrecios', cambios: { factorPrecios: 1.5 } },
-  { id: 'E5', nombre: 'Más escalamientos', descripcion: 'El 25 % de las conversaciones pasa a agentes humanos', parametro: 'porcentajeHandoff', cambios: { porcentajeHandoff: 25 } },
-  { id: 'E6', nombre: 'Demanda variable', descripcion: 'La demanda diaria varía al azar ±30 % (200 corridas)', parametro: 'variabilidadPct', cambios: { variabilidadPct: 30, corridas: 200 } },
+  { id: 'E0', tipo: 'decision', nombre: 'Base', descripcion: 'Enrutador activo (30 % Terra, 10 % handoff) y presupuesto de USD 6.000/mes', parametro: null, cambios: {} },
+  { id: 'E1', tipo: 'decision', nombre: 'Sin enrutamiento', descripcion: 'Todas las consultas de IA van a Terra', parametro: 'porcentajeTerra', cambios: { porcentajeTerra: 100 } },
+  { id: 'E2', tipo: 'decision', nombre: 'Demanda duplicada', descripcion: 'Temporada alta sostenida: el volumen diario se duplica', parametro: 'conversacionesDiarias', cambios: { conversacionesDiarias: 153_334 } },
+  { id: 'E3', tipo: 'decision', nombre: 'Crecimiento de demanda', descripcion: 'Expansión a nuevos mercados: la demanda crece 20 % cada mes', parametro: 'crecimientoMensualPct', cambios: { crecimientoMensualPct: 20 } },
+  { id: 'E4', tipo: 'decision', nombre: 'Alza de precios', descripcion: 'El proveedor sube 50 % el precio por token', parametro: 'factorPrecios', cambios: { factorPrecios: 1.5 } },
+  { id: 'E5', tipo: 'decision', nombre: 'Más escalamientos', descripcion: 'El 25 % de las conversaciones pasa a agentes humanos', parametro: 'porcentajeHandoff', cambios: { porcentajeHandoff: 25 } },
+  { id: 'E6', tipo: 'aleatoria', nombre: 'Demanda variable', descripcion: 'La demanda diaria varía al azar ±30 % (200 corridas)', parametro: 'variabilidadPct', cambios: { variabilidadPct: 30, corridas: 200 } },
+  { id: 'X1', tipo: 'extrema', nombre: 'Sin demanda', descripcion: 'Prueba extrema: no llegan conversaciones; el saldo solo suma la recarga', parametro: 'conversacionesDiarias', cambios: { conversacionesDiarias: 0 } },
+  { id: 'X2', tipo: 'extrema', nombre: 'Sin presupuesto', descripcion: 'Prueba extrema: no hay recarga; solo se gasta el saldo inicial', parametro: 'presupuestoMensual', cambios: { presupuestoMensual: 0 } },
+  { id: 'X3', tipo: 'extrema', nombre: 'Sin saldo ni recarga', descripcion: 'Prueba extrema: saldo inicial y presupuesto en cero; ninguna conversación de IA se atiende', parametro: 'presupuestoMensual', cambios: { presupuestoMensual: 0, saldoInicial: 0 } },
+  { id: 'X4', tipo: 'extrema', nombre: 'Demanda ×10', descripcion: 'Prueba extrema: la demanda se multiplica por 10; el gasto queda limitado a la recarga', parametro: 'conversacionesDiarias', cambios: { conversacionesDiarias: 766_670 } },
 ];
 
 export interface PuntoSerie {
@@ -239,8 +246,10 @@ export function simular(parametros: ParametrosSimulacion): ResultadoSimulacion {
     return punto;
   });
 
-  const diaAlerta = serie.find((s) => s.saldo < p.umbralAlerta)?.dia ?? null;
-  const diaAgotamiento = serie.find((s) => s.saldo === 0)?.dia ?? null;
+  // Como en Vensim, el tiempo empieza en 0: si el saldo inicial ya está bajo el umbral
+  // o en cero, el evento ocurre el día 0
+  const diaAlerta = p.saldoInicial < p.umbralAlerta ? 0 : serie.find((s) => s.saldo < p.umbralAlerta)?.dia ?? null;
+  const diaAgotamiento = p.saldoInicial <= 0 ? 0 : serie.find((s) => s.saldo === 0)?.dia ?? null;
   const consumoMaximoEsperado = demandaEsperada(p, p.dias) * fraccionIA * costoIA;
 
   return {
@@ -259,6 +268,28 @@ export function simular(parametros: ParametrosSimulacion): ResultadoSimulacion {
       probabilidadAgotamiento: redondear(corridasAgotadas / corridas, 3),
       presupuestoMinimoSostenible: redondear(consumoMaximoEsperado * 30),
     },
+  };
+}
+
+/**
+ * Operación diaria del escenario base (E0): reparto de las conversaciones y consumo
+ * esperado por modelo. Es la referencia con la que el panel avanza el saldo real día a día.
+ */
+export function operacionDiariaBase(p: ParametrosSimulacion = PARAMETROS_BASE) {
+  const conversacionesIA = p.conversacionesDiarias * (1 - p.porcentajeHandoff / 100);
+  const conversacionesTerra = conversacionesIA * (p.porcentajeTerra / 100);
+  const conversacionesLuna = conversacionesIA - conversacionesTerra;
+  const costoTerra = calcularCostoConversacion(PRECIOS_REFERENCIA.terra, p.tokensEntrada, p.tokensSalida) * p.factorPrecios;
+  const costoLuna = calcularCostoConversacion(PRECIOS_REFERENCIA.luna, p.tokensEntrada, p.tokensSalida) * p.factorPrecios;
+  return {
+    conversaciones: Math.round(p.conversacionesDiarias),
+    handoffs: Math.round(p.conversacionesDiarias - conversacionesIA),
+    terra: { porcentaje: p.porcentajeTerra, conversaciones: Math.round(conversacionesTerra), costo: redondear(conversacionesTerra * costoTerra) },
+    luna: { porcentaje: 100 - p.porcentajeTerra, conversaciones: Math.round(conversacionesLuna), costo: redondear(conversacionesLuna * costoLuna) },
+    consumoDiario: redondear(conversacionesIA * costoPorConversacionIA(p)),
+    costoPorConversacionIA: redondear(costoPorConversacionIA(p), 6),
+    // Presupuesto con el que la recarga iguala al consumo (Tabla 5 del informe: USD 4.901,78)
+    presupuestoMinimo: redondear(conversacionesIA * costoPorConversacionIA(p) * 30),
   };
 }
 

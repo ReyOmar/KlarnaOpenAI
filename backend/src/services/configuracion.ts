@@ -3,7 +3,7 @@
 
 import prisma from '../db/prisma';
 
-export const PRESUPUESTO_MENSUAL_DEFAULT = 20000; // USD/mes
+export const PRESUPUESTO_MENSUAL_DEFAULT = 6000;  // USD/mes (escenario base del informe de simulación)
 export const UMBRAL_ALERTA_DEFAULT = 2000;        // USD
 export const SALDO_INICIAL_USD = 10000;           // C(0) cuando no hay historial
 

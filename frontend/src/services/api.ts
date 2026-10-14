@@ -151,11 +151,22 @@ export type ModeloDistribucion = {
   porcentajeCosto: string;
 }
 
+export type OperacionBase = {
+  conversaciones: number;
+  handoffs: number;
+  terra: { porcentaje: number; conversaciones: number; costo: number };
+  luna: { porcentaje: number; conversaciones: number; costo: number };
+  consumoDiario: number;
+  costoPorConversacionIA: number;
+  presupuestoMinimo: number;
+}
+
 export type DistribucionResponse = {
   modelos: ModeloDistribucion[];
   totalConsultas: number;
   totalCosto: number;
   proveedor: string;
+  operacionBase: OperacionBase;
 }
 
 export function obtenerDistribucion(): Promise<DistribucionResponse> {
@@ -244,6 +255,7 @@ export type ResultadoSimulacion = {
 
 export type EscenarioPredefinido = {
   id: string;
+  tipo: 'decision' | 'aleatoria' | 'extrema';
   nombre: string;
   descripcion: string;
   parametro: keyof ParametrosSimulacion | null;

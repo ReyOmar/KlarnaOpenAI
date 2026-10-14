@@ -94,7 +94,7 @@ cd backend
 cp .env.example .env        # completar DATABASE_URL, AI_PROVIDER y las llaves de Clerk
 npm install
 npx prisma migrate dev      # crea las tablas
-npm run db:seed             # datos de ejemplo (30 días de historial)
+npm run db:seed             # 30 días de historial del escenario base (E0)
 npm run dev
 
 # 2. Frontend (otra terminal)
@@ -108,7 +108,7 @@ npm run dev
 - **Dashboard**: http://localhost:5173/admin
 - **Estado de la API**: http://localhost:3001/api/health (base de datos + proveedor de IA)
 
-El seed se puede ejecutar varias veces: solo crea lo que falta. Al iniciar, el servidor también crea los datos mínimos (modelos, configuración, agentes y usuario demo) si no existen.
+El seed se puede ejecutar varias veces: solo crea lo que falta. Si encuentra los datos de ejemplo de versiones anteriores (historial aleatorio con presupuesto de USD 20.000), los reemplaza por el escenario base del informe. Al iniciar, el servidor también crea los datos mínimos (modelos, configuración, agentes y usuario demo) si no existen.
 
 ### Pruebas
 
@@ -158,7 +158,8 @@ C(t+1) = max(C(t) + R - U(t), 0)      R = presupuesto mensual / 30
 ```
 
 - `C(t)`: saldo de créditos (USD) · `R`: recarga diaria · `U(t)`: consumo del día.
-- Los días sin actividad se completan automáticamente aplicando solo la recarga.
+- Cada día el saldo avanza con la operación del escenario base del informe (E0): 76.667 conversaciones, 10 % a humanos y, de la IA, 30 % a Terra y 70 % a Luna, lo que consume USD 163,39 al día (limitado a lo disponible). Los mensajes reales del chat se suman a ese consumo.
+- El panel muestra ese reparto diario junto a las consultas reales del chat, y en Configuración avisa si el presupuesto queda bajo el mínimo sostenible (USD 4.901,78/mes).
 - Alertas: **BAJO** (saldo < umbral), **CRÍTICO** (< 25 % del umbral), **AGOTADO** (saldo = 0).
 
 ### Simulador de escenarios
@@ -172,7 +173,7 @@ C(t) = max(C(t-1) + R - U(t), 0)
 ```
 
 - Parámetros editables: demanda (V0, crecimiento g, variabilidad v), enrutamiento (% handoff h, % Terra p), tokens, factor de precios f, presupuesto, saldo inicial, umbral, horizonte y número de corridas.
-- Siete escenarios predefinidos (E0 a E6); cada uno cambia **un solo parámetro** respecto del base para comparar con sentido.
+- Las once corridas del informe de simulación en Vensim: escenarios de decisión E0 a E5 (cada uno cambia **un solo parámetro** respecto del base), demanda aleatoria E6 y pruebas de condiciones extremas X1 a X4. Los resultados de E0–E5 y X1–X4 coinciden con las Tablas 5 y 6 del informe (lo verifican las pruebas).
 - Indicadores: saldo final, día de alerta y de agotamiento, conversaciones no atendidas, gasto, presupuesto mínimo sostenible y, con variabilidad, probabilidad de agotamiento (percentiles 5–95 % de las corridas).
 - Supuesto base: 2,3 millones de conversaciones/mes (Klarna, 2024), 30 % a Terra, 10 % de handoff y un presupuesto propuesto de USD 6.000/mes. Resultado: sostenible con enrutador; sin él el saldo se agota el día 42.
 

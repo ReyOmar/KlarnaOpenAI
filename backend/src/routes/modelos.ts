@@ -3,6 +3,7 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../db/prisma';
 import { infoIA } from '../services/ia';
+import { operacionDiariaBase } from '../services/simulacion';
 
 const router = Router();
 
@@ -46,6 +47,8 @@ router.get('/distribucion', async (_req: Request, res: Response): Promise<void> 
       totalConsultas,
       totalCosto,
       proveedor: infoIA().proveedor,
+      // Reparto diario del escenario base del informe (Klarna, 2024): referencia del modelo
+      operacionBase: operacionDiariaBase(),
     });
   } catch (error) {
     console.error('Error en GET /api/modelos/distribucion:', error);

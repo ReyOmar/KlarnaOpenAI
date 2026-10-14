@@ -83,6 +83,19 @@ const ETIQUETAS: Partial<Record<keyof ParametrosSimulacion, string>> = Object.fr
   GRUPOS.flatMap((g) => g.campos.map((c) => [c.key, c.label]))
 );
 
+const TIPOS: Record<EscenarioPredefinido["tipo"], string> = {
+  decision: "Decisión",
+  aleatoria: "Aleatoria",
+  extrema: "Extrema",
+};
+
+// Parámetros que cambia un escenario respecto del base (el número de corridas no es un supuesto del modelo)
+function describirCambios(e: EscenarioPredefinido, base: ParametrosSimulacion): string {
+  const cambios = Object.entries(e.cambios).filter(([k]) => k !== "corridas") as [keyof ParametrosSimulacion, number][];
+  if (cambios.length === 0) return "—";
+  return cambios.map(([k, v]) => `${ETIQUETAS[k] ?? k}: ${base[k].toLocaleString("en-US")} → ${v.toLocaleString("en-US")}`).join(" · ");
+}
+
 const usd = (v: number) => `$${Math.round(v).toLocaleString("en-US")}`;
 const num = (v: number) => Math.round(v).toLocaleString("en-US");
 
@@ -178,7 +191,7 @@ export default function Simulador({ colors, isDark }: { colors: Colors; isDark: 
         <div style={{ ...label, fontSize: "9px", letterSpacing: "0.1em", marginBottom: "4px" }}>Simulación de escenarios</div>
         <h2 style={{ fontSize: "18px", fontWeight: 600, color: colors.text, margin: "0 0 6px 0" }}>Proyección del saldo de créditos C(t)</h2>
         <p style={{ fontSize: "12.5px", color: colors.textSec, lineHeight: 1.6, margin: "0 0 16px 0" }}>
-          Prueba decisiones sin afectar la operación real. Cada escenario predefinido modifica un solo parámetro respecto del base.
+          Prueba decisiones sin afectar la operación real. Las corridas son las del informe de simulación en Vensim: escenarios de decisión (E0–E5), demanda aleatoria (E6) y pruebas de condiciones extremas (X1–X4).
           Modelo: C(t) = max(C(t−1) + R − U(t), 0), con R = presupuesto / 30 y U(t) = demanda × (1 − handoff) × costo por conversación.
         </p>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
@@ -338,10 +351,10 @@ export default function Simulador({ colors, isDark }: { colors: Colors; isDark: 
         <div style={{ ...label, letterSpacing: "0.1em", marginBottom: "4px" }}>Comparación</div>
         <h3 style={{ fontSize: "15px", fontWeight: 600, color: colors.text, margin: "0 0 14px 0" }}>Resultados de los escenarios predefinidos</h3>
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "760px" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "860px" }}>
             <thead>
               <tr style={{ borderBottom: `1px solid ${colors.border}` }}>
-                {["Escenario", "Parámetro modificado", "Saldo final", "Día alerta", "Día agotamiento", "Conv. no atendidas", "Gasto", "Presupuesto mínimo"].map((h) => (
+                {["Escenario", "Tipo", "Parámetro modificado", "Saldo final", "Día alerta", "Día agotamiento", "Conv. no atendidas", "Gasto", "Presupuesto mínimo"].map((h) => (
                   <th key={h} style={{ ...label, textAlign: "left", padding: "10px 10px", fontWeight: 500 }}>{h}</th>
                 ))}
               </tr>
@@ -354,9 +367,8 @@ export default function Simulador({ colors, isDark }: { colors: Colors; isDark: 
                   style={{ borderBottom: `1px solid ${colors.border}`, cursor: "pointer", background: escenarioId === c.id ? "rgba(168,85,247,0.08)" : "transparent" }}
                 >
                   <td style={{ padding: "11px 10px", fontSize: "12.5px", color: colors.text, fontWeight: 500 }}>{c.id} · {c.nombre}</td>
-                  <td style={{ padding: "11px 10px", fontSize: "12px", color: colors.textSec }}>
-                    {c.parametro ? `${ETIQUETAS[c.parametro] ?? c.parametro}: ${base[c.parametro]} → ${c.cambios[c.parametro]}` : "—"}
-                  </td>
+                  <td style={{ padding: "11px 10px", fontSize: "11px", color: c.tipo === "extrema" ? "#fbbf24" : colors.textTertiary }}>{TIPOS[c.tipo]}</td>
+                  <td style={{ padding: "11px 10px", fontSize: "12px", color: colors.textSec }}>{describirCambios(c, base)}</td>
                   <td style={{ padding: "11px 10px", fontSize: "12px", fontFamily: "JetBrains Mono, monospace", color: c.indicadores.saldoFinal === 0 ? "#f87171" : colors.text }}>{usd(c.indicadores.saldoFinal)}</td>
                   <td style={{ padding: "11px 10px", fontSize: "12px", fontFamily: "JetBrains Mono, monospace", color: colors.textSec }}>{c.indicadores.diaAlerta ?? "—"}</td>
                   <td style={{ padding: "11px 10px", fontSize: "12px", fontFamily: "JetBrains Mono, monospace", color: c.indicadores.diaAgotamiento ? "#f87171" : colors.textSec }}>{c.indicadores.diaAgotamiento ?? "—"}</td>
@@ -370,7 +382,7 @@ export default function Simulador({ colors, isDark }: { colors: Colors; isDark: 
         </div>
         <p style={{ fontSize: "11px", color: colors.textTertiary, margin: "12px 0 0 0", lineHeight: 1.5 }}>
           Supuestos: 2,3 millones de conversaciones/mes (Klarna, 2024) → 76.667/día; 800 tokens de entrada y 400 de salida por conversación;
-          precios de referencia Terra USD 2/12 y Luna USD 0,20/1,20 por millón de tokens; saldo inicial USD 10.000. Haz clic en una fila para cargar el escenario.
+          precios de referencia Terra USD 2/12 y Luna USD 0,20/1,20 por millón de tokens; saldo inicial USD 10.000. Los resultados de E0–E5 y X1–X4 coinciden con las Tablas 5 y 6 del informe; E6 promedia 200 corridas en lugar de una. Haz clic en una fila para cargar el escenario.
         </p>
       </div>
     </div>

@@ -186,7 +186,7 @@ export default function Dashboard() {
   };
   const [theme, setTheme] = useState<Theme>("dark");
   const [alertThreshold, setAlertThreshold] = useState(2000);
-  const [monthlyBudget, setMonthlyBudget] = useState(20000);
+  const [monthlyBudget, setMonthlyBudget] = useState(6000);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState(false);
@@ -332,9 +332,14 @@ export default function Dashboard() {
   const terraModel = distribucion?.modelos.find((m) => m.nombre === "Terra") ?? emptyModel("Terra");
   const lunaModel = distribucion?.modelos.find((m) => m.nombre === "Luna") ?? emptyModel("Luna");
 
-  const terraPctNum = parseFloat(terraModel.porcentajeConsultas) || 0;
-  const lunaPctNum = parseFloat(lunaModel.porcentajeConsultas) || 0;
-  const totalPeriodCost = distribucion?.totalCosto ?? 0;
+  // Reparto del escenario base del informe (Klarna, 2024): 30 % de la IA a Terra, 70 % a Luna
+  const operacion = distribucion?.operacionBase ?? null;
+  const terraPctNum = operacion?.terra.porcentaje ?? 0;
+  const lunaPctNum = operacion?.luna.porcentaje ?? 0;
+  // Consumo U(t) registrado en los últimos 30 días (operación base + mensajes del chat)
+  const totalPeriodCost = historial.reduce((sum, h) => sum + h.consumoU, 0);
+  const formatNum = (v: number) => Math.round(v).toLocaleString("en-US");
+  const presupuestoMinimo = operacion?.presupuestoMinimo ?? null;
   const formatUsd = (v: number) =>
     `$${v.toLocaleString("en-US", { minimumFractionDigits: v > 0 && v < 100 ? 2 : 0, maximumFractionDigits: v < 1 ? 4 : v < 100 ? 2 : 0 })}`;
 
@@ -596,8 +601,8 @@ export default function Dashboard() {
                 padding: "7px 14px",
                 fontSize: "12px",
                 color: colors.textSec,
-                cursor: "pointer",
               }}
+              title="Los gráficos y totales del resumen cubren los últimos 30 días"
             >
               <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
                 <rect x="1" y="2" width="11" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.1" />
@@ -606,9 +611,6 @@ export default function Dashboard() {
                 <line x1="9" y1="1" x2="9" y2="3.5" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
               </svg>
               Últimos 30 días
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" style={{ opacity: 0.5 }}>
-                <path d="M2 4l3 3 3-3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
             </div>
 
             {/* Notification Bell */}
@@ -827,7 +829,10 @@ export default function Dashboard() {
                   <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "4px" }}>
                     Distribución de modelos
                   </div>
-                  <div style={{ fontSize: "14px", fontWeight: 600, color: colors.text, marginBottom: "20px" }}>Enrutamiento activo</div>
+                  <div style={{ fontSize: "14px", fontWeight: 600, color: colors.text, marginBottom: "4px" }}>Enrutamiento del escenario base</div>
+                  <div style={{ fontSize: "11px", color: colors.textTertiary, marginBottom: "16px" }}>
+                    {operacion ? `${formatNum(operacion.conversaciones)} conv./día · ${formatNum(operacion.handoffs)} a humanos (10 %)` : "—"}
+                  </div>
 
                   {/* Stacked bar */}
                   <div style={{ marginBottom: "20px" }}>
@@ -857,12 +862,16 @@ export default function Dashboard() {
                     </div>
                     <div style={{ display: "flex", gap: "16px" }}>
                       <div>
-                        <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase", letterSpacing: "0.08em" }}>Costo</div>
-                        <div style={{ fontSize: "13px", fontWeight: 600, color: colors.text }}>{formatUsd(terraModel.costoTotal)}</div>
+                        <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase", letterSpacing: "0.08em" }}>Conv./día</div>
+                        <div style={{ fontSize: "13px", fontWeight: 600, color: colors.text }}>{operacion ? formatNum(operacion.terra.conversaciones) : "—"}</div>
                       </div>
                       <div>
-                        <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase", letterSpacing: "0.08em" }}>Consultas</div>
-                        <div style={{ fontSize: "13px", fontWeight: 600, color: colors.text }}>{terraModel.consultas.toLocaleString()}</div>
+                        <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase", letterSpacing: "0.08em" }}>Costo/día</div>
+                        <div style={{ fontSize: "13px", fontWeight: 600, color: colors.text }}>{operacion ? formatUsd(operacion.terra.costo) : "—"}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase", letterSpacing: "0.08em" }}>Chat</div>
+                        <div style={{ fontSize: "13px", fontWeight: 600, color: colors.text }} title="Consultas reales atendidas en el chat del prototipo">{terraModel.consultas.toLocaleString()}</div>
                       </div>
                     </div>
                   </div>
@@ -883,19 +892,26 @@ export default function Dashboard() {
                     </div>
                     <div style={{ display: "flex", gap: "16px" }}>
                       <div>
-                        <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase", letterSpacing: "0.08em" }}>Costo</div>
-                        <div style={{ fontSize: "13px", fontWeight: 600, color: colors.text }}>{formatUsd(lunaModel.costoTotal)}</div>
+                        <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase", letterSpacing: "0.08em" }}>Conv./día</div>
+                        <div style={{ fontSize: "13px", fontWeight: 600, color: colors.text }}>{operacion ? formatNum(operacion.luna.conversaciones) : "—"}</div>
                       </div>
                       <div>
-                        <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase", letterSpacing: "0.08em" }}>Consultas</div>
-                        <div style={{ fontSize: "13px", fontWeight: 600, color: colors.text }}>{lunaModel.consultas.toLocaleString()}</div>
+                        <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase", letterSpacing: "0.08em" }}>Costo/día</div>
+                        <div style={{ fontSize: "13px", fontWeight: 600, color: colors.text }}>{operacion ? formatUsd(operacion.luna.costo) : "—"}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase", letterSpacing: "0.08em" }}>Chat</div>
+                        <div style={{ fontSize: "13px", fontWeight: 600, color: colors.text }} title="Consultas reales atendidas en el chat del prototipo">{lunaModel.consultas.toLocaleString()}</div>
                       </div>
                     </div>
                   </div>
 
                   <div style={{ marginTop: "auto", padding: "10px 12px", background: colors.inputBg, borderRadius: "8px", border: `1px solid ${colors.border}` }}>
-                    <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "2px" }}>Costo total del período</div>
+                    <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "2px" }}>Consumo de los últimos 30 días</div>
                     <div style={{ fontSize: "16px", fontWeight: 700, color: colors.text }}>{formatUsd(totalPeriodCost)}</div>
+                    <div style={{ fontSize: "10.5px", color: colors.textTertiary, marginTop: "2px" }}>
+                      {operacion ? `Operación base ${formatUsd(operacion.consumoDiario)}/día + chat del prototipo` : "Suma de U(t) del período"}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1152,7 +1168,7 @@ export default function Dashboard() {
                   Métricas de Enrutamiento Inteligente
                 </div>
                 <h2 style={{ fontSize: "18px", fontWeight: 600, color: colors.text, margin: "0 0 20px 0" }}>
-                  Distribución Dinámica: Terra vs Luna{distribucion?.proveedor ? ` (${distribucion.proveedor})` : ""}
+                  Distribución Terra vs Luna{distribucion?.proveedor ? ` (${distribucion.proveedor})` : ""}
                 </h2>
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", marginBottom: "24px" }}>
@@ -1164,16 +1180,28 @@ export default function Dashboard() {
                       </span>
                     </div>
                     <p style={{ fontSize: "13px", color: colors.textSec, lineHeight: 1.5, marginBottom: "16px" }}>
-                      Enrutado para consultas complejas: resolución de disputas de transacciones, reestructuración de pagos de cuotas y casos con alta ambigüedad.
+                      Recibe las consultas complejas: reembolsos, devoluciones, cambios de plan, compras denegadas y mensajes largos o con varias preguntas.
                     </p>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                    <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "8px" }}>Escenario base (por día)</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "14px" }}>
                       <div>
-                        <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase" }}>Costo Total</div>
-                        <div style={{ fontSize: "16px", fontWeight: 700, color: colors.text }}>{formatUsd(terraModel.costoTotal)}</div>
+                        <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase" }}>Conversaciones</div>
+                        <div style={{ fontSize: "16px", fontWeight: 700, color: colors.text }}>{operacion ? formatNum(operacion.terra.conversaciones) : "—"}</div>
                       </div>
                       <div>
+                        <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase" }}>Costo</div>
+                        <div style={{ fontSize: "16px", fontWeight: 700, color: colors.text }}>{operacion ? formatUsd(operacion.terra.costo) : "—"}</div>
+                      </div>
+                    </div>
+                    <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "8px" }}>Chat del prototipo (acumulado)</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                      <div>
                         <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase" }}>Consultas</div>
-                        <div style={{ fontSize: "16px", fontWeight: 700, color: colors.text }}>{terraModel.consultas.toLocaleString()}</div>
+                        <div style={{ fontSize: "16px", fontWeight: 700, color: colors.text }}>{terraModel.consultas.toLocaleString()} <span style={{ fontSize: "11px", fontWeight: 400, color: colors.textTertiary }}>({terraModel.porcentajeConsultas}%)</span></div>
+                      </div>
+                      <div>
+                        <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase" }}>Costo</div>
+                        <div style={{ fontSize: "16px", fontWeight: 700, color: colors.text }}>{formatUsd(terraModel.costoTotal)}</div>
                       </div>
                     </div>
                   </div>
@@ -1186,16 +1214,28 @@ export default function Dashboard() {
                       </span>
                     </div>
                     <p style={{ fontSize: "13px", color: colors.textSec, lineHeight: 1.5, marginBottom: "16px" }}>
-                      Enrutado para consultas frecuentes: consulta de saldos, fechas de vencimiento de pago, preguntas frecuentes sobre políticas y confirmaciones rápidas.
+                      Recibe el resto de las consultas: estado de pedidos, fechas de pago, preguntas frecuentes sobre políticas y confirmaciones rápidas.
                     </p>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                    <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "8px" }}>Escenario base (por día)</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "14px" }}>
                       <div>
-                        <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase" }}>Costo Total</div>
-                        <div style={{ fontSize: "16px", fontWeight: 700, color: colors.text }}>{formatUsd(lunaModel.costoTotal)}</div>
+                        <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase" }}>Conversaciones</div>
+                        <div style={{ fontSize: "16px", fontWeight: 700, color: colors.text }}>{operacion ? formatNum(operacion.luna.conversaciones) : "—"}</div>
                       </div>
                       <div>
+                        <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase" }}>Costo</div>
+                        <div style={{ fontSize: "16px", fontWeight: 700, color: colors.text }}>{operacion ? formatUsd(operacion.luna.costo) : "—"}</div>
+                      </div>
+                    </div>
+                    <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "8px" }}>Chat del prototipo (acumulado)</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                      <div>
                         <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase" }}>Consultas</div>
-                        <div style={{ fontSize: "16px", fontWeight: 700, color: colors.text }}>{lunaModel.consultas.toLocaleString()}</div>
+                        <div style={{ fontSize: "16px", fontWeight: 700, color: colors.text }}>{lunaModel.consultas.toLocaleString()} <span style={{ fontSize: "11px", fontWeight: 400, color: colors.textTertiary }}>({lunaModel.porcentajeConsultas}%)</span></div>
+                      </div>
+                      <div>
+                        <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "9px", color: colors.textTertiary, textTransform: "uppercase" }}>Costo</div>
+                        <div style={{ fontSize: "16px", fontWeight: 700, color: colors.text }}>{formatUsd(lunaModel.costoTotal)}</div>
                       </div>
                     </div>
                   </div>
@@ -1203,10 +1243,11 @@ export default function Dashboard() {
 
                 <div style={{ padding: "16px 20px", background: colors.inputBg, borderRadius: "10px", border: `1px solid ${colors.border}` }}>
                   <div style={{ fontSize: "13px", fontWeight: 600, color: colors.text, marginBottom: "4px" }}>
-                    Regla de Enrutamiento Silencioso (Invisible al Usuario)
+                    Regla de enrutamiento (invisible para el usuario)
                   </div>
                   <div style={{ fontSize: "12px", color: colors.textSec, lineHeight: 1.5 }}>
-                    El usuario final nunca conoce cuál modelo procesa su consulta. El router analiza la semántica y complejidad del mensaje en milisegundos y optimiza el consumo de tokens manteniendo la máxima calidad de servicio.
+                    El router aplica reglas por palabras clave en cascada: primero decide si escala a un humano (disputas, fraude, cargos no reconocidos, cuenta bloqueada, temas legales o cuando el cliente lo pide) y, si no, elige Terra o Luna. El usuario nunca ve qué modelo respondió.
+                    {operacion && ` En el escenario base del informe cada conversación de IA cuesta en promedio ${formatUsd(operacion.costoPorConversacionIA)} y la operación consume ${formatUsd(operacion.consumoDiario)} al día; sin enrutador (todo a Terra) el saldo se agota el día 42.`}
                   </div>
                 </div>
               </div>
@@ -1285,7 +1326,7 @@ export default function Dashboard() {
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px", marginBottom: "28px" }}>
                   <div style={{ background: colors.inputBg, padding: "20px", borderRadius: "10px", border: `1px solid ${colors.border}` }}>
                     <label style={{ display: "block", fontFamily: "JetBrains Mono, monospace", fontSize: "10px", color: colors.textTertiary, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "8px" }}>
-                      Umbral de Alerta Crítica (USD)
+                      Umbral de alerta de saldo bajo (USD)
                     </label>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "10px" }}>
                       <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "20px", fontWeight: 700, color: "#f87171" }}>
@@ -1325,6 +1366,26 @@ export default function Dashboard() {
                     />
                   </div>
                 </div>
+
+                {presupuestoMinimo !== null && operacion && (
+                  <div
+                    style={{
+                      marginBottom: "20px",
+                      padding: "12px 16px",
+                      borderRadius: "8px",
+                      fontSize: "12.5px",
+                      lineHeight: 1.5,
+                      border: `1px solid ${monthlyBudget < presupuestoMinimo ? "rgba(239,68,68,0.3)" : colors.border}`,
+                      background: monthlyBudget < presupuestoMinimo ? "rgba(239,68,68,0.08)" : colors.inputBg,
+                      color: monthlyBudget < presupuestoMinimo ? "#f87171" : colors.textSec,
+                    }}
+                  >
+                    Presupuesto mínimo sostenible de la operación base: <strong>{formatUsd(presupuestoMinimo)}/mes</strong> (30 × consumo diario).{" "}
+                    {monthlyBudget < presupuestoMinimo
+                      ? `Con ${formatUsd(monthlyBudget)}/mes la recarga (${formatUsd(monthlyBudget / 30)}/día) no cubre el consumo (${formatUsd(operacion.consumoDiario)}/día) y el saldo bajará cada día.`
+                      : `Con ${formatUsd(monthlyBudget)}/mes el saldo crece ${formatUsd(monthlyBudget / 30 - operacion.consumoDiario)} al día.`}
+                  </div>
+                )}
 
                 <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: "16px" }}>
                   {saveError && <span style={{ fontSize: "12px", color: "#f87171" }}>{saveError}</span>}

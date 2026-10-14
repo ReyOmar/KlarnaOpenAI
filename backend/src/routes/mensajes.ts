@@ -193,7 +193,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
 
     // 9. Actualizar saldo diario: C(t) -= costo, U(t) += costo
     const config = await obtenerConfiguracion();
-    const saldoHoy = await asegurarSaldoDeHoy(calcularRecargaDiaria(config.presupuestoMensual));
+    const saldoHoy = await asegurarSaldoDeHoy(calcularRecargaDiaria(config.presupuestoMensual), config.umbralAlerta);
     const saldoActualizado = await registrarConsumoDiario(saldoHoy.id, costo);
 
     // 10. Evaluar alertas

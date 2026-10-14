@@ -6,6 +6,7 @@ import {
   simular,
   compararEscenarios,
   costoPorConversacionIA,
+  operacionDiariaBase,
 } from '../src/services/simulacion';
 
 const base = PARAMETROS_BASE;
@@ -65,4 +66,37 @@ test('normalizarParametros valida tipos y rangos', () => {
   assert.throws(() => normalizarParametros({ porcentajeTerra: 150 }), /entre/);
   assert.equal(normalizarParametros({ presupuestoMensual: 9000 }).presupuestoMensual, 9000);
   assert.equal(normalizarParametros({ desconocido: 1 }).dias, 90);
+});
+
+// Valores de las Tablas 5 y 6 del informe de simulación en Vensim
+test('los escenarios E0–E5 y X1–X4 reproducen los resultados del informe', () => {
+  const informe: Record<string, [number, number | null, number | null, number]> = {
+    // saldo final, día de alerta, día de agotamiento, conversaciones no atendidas
+    E0: [13_294.66, null, null, 0],
+    E1: [0, 34, 42, 1_835_027],
+    E2: [0, 64, 79, 595_730],
+    E3: [8_486.87, null, null, 0],
+    E4: [5_941.98, null, null, 0],
+    E5: [15_745.55, null, null, 0],
+    X1: [28_000, null, null, 0],
+    X2: [0, 49, 62, 1_987_054],
+    X3: [0, 0, 0, 6_210_027],
+    X4: [0, 6, 7, 50_275_946],
+  };
+  const resultados = new Map(compararEscenarios().map((e) => [e.id, e.resultado.indicadores]));
+  for (const [id, [saldo, alerta, agotamiento, noAtendidas]] of Object.entries(informe)) {
+    const i = resultados.get(id)!;
+    assert.equal(i.saldoFinal, saldo, `${id} saldo final`);
+    assert.equal(i.diaAgotamiento, agotamiento, `${id} día de agotamiento`);
+    assert.equal(i.conversacionesNoAtendidas, noAtendidas, `${id} no atendidas`);
+    if (id !== 'X3' && id !== 'X4') assert.equal(i.diaAlerta, alerta, `${id} día de alerta`);
+  }
+});
+
+test('la operación diaria base reparte la demanda como en el informe', () => {
+  const op = operacionDiariaBase();
+  assert.equal(op.handoffs, 7_667);
+  assert.equal(op.terra.conversaciones + op.luna.conversaciones, 69_000);
+  assert.equal(op.consumoDiario, 163.39);
+  assert.equal(op.presupuestoMinimo, 4_901.78);
 });

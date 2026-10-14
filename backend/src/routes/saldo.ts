@@ -20,8 +20,8 @@ router.get('/', async (_req: Request, res: Response): Promise<void> => {
     const config = await obtenerConfiguracion();
     const recargaDiaria = calcularRecargaDiaria(config.presupuestoMensual);
 
-    // Avanza el modelo hasta hoy (aplica R en los días sin actividad)
-    const saldoHoy = await asegurarSaldoDeHoy(recargaDiaria);
+    // Avanza el modelo hasta hoy (recarga menos el consumo de la operación base)
+    const saldoHoy = await asegurarSaldoDeHoy(recargaDiaria, config.umbralAlerta);
 
     // Consumo promedio de los últimos 7 días (incluye hoy)
     const saldos7Dias = await prisma.saldoDiario.findMany({
