@@ -8,7 +8,7 @@ import fs from 'fs';
 import path from 'path';
 
 import prisma from './db/prisma';
-import { clerk, requiereSesion } from './middleware/auth';
+import { clerk, clerkConfigurado, requiereAdmin, requiereSesion } from './middleware/auth';
 import mensajesRouter from './routes/mensajes';
 import saldoRouter from './routes/saldo';
 import alertasRouter from './routes/alertas';
@@ -28,10 +28,8 @@ const PORT = Number(process.env.PORT) || 3001;
 app.use(cors(process.env.CORS_ORIGIN ? { origin: process.env.CORS_ORIGIN.split(',') } : undefined));
 app.use(express.json({ limit: '100kb' }));
 
-// Clerk solo en /api: los archivos del frontend se sirven sin pasar por la autenticación
-app.use('/api', clerk);
-
-// Health check (público, lo usa Render): estado del servidor, la base de datos y el proveedor de IA
+// Health check (público, lo usa Render): estado del servidor, la base de datos, el proveedor
+// de IA y el login. Va antes de Clerk para que no dependa de que sus llaves estén configuradas.
 app.get('/api/health', async (_req, res) => {
   let baseDatos = true;
   try {
@@ -44,18 +42,23 @@ app.get('/api/health', async (_req, res) => {
     status: baseDatos ? 'ok' : 'degradado',
     baseDatos,
     ia: infoIA(),
+    login: clerkConfigurado() ? 'ok' : 'faltan CLERK_PUBLISHABLE_KEY / CLERK_SECRET_KEY',
     timestamp: new Date().toISOString(),
   });
 });
 
-// API Routes — requieren sesión iniciada en Clerk
+// Clerk solo en /api: los archivos del frontend se sirven sin pasar por la autenticación
+app.use('/api', clerk);
+
+// API Routes — el chat es para cualquier usuario con sesión (cliente);
+// las rutas del panel requieren el rol admin
 app.use('/api/mensajes', requiereSesion, mensajesRouter);
-app.use('/api/saldo', requiereSesion, saldoRouter);
-app.use('/api/alertas', requiereSesion, alertasRouter);
-app.use('/api/handoffs', requiereSesion, handoffsRouter);
-app.use('/api/modelos', requiereSesion, modelosRouter);
-app.use('/api/configuracion', requiereSesion, configuracionRouter);
-app.use('/api/simulacion', requiereSesion, simulacionRouter);
+app.use('/api/saldo', requiereAdmin, saldoRouter);
+app.use('/api/alertas', requiereAdmin, alertasRouter);
+app.use('/api/handoffs', requiereAdmin, handoffsRouter);
+app.use('/api/modelos', requiereAdmin, modelosRouter);
+app.use('/api/configuracion', requiereAdmin, configuracionRouter);
+app.use('/api/simulacion', requiereAdmin, simulacionRouter);
 
 // Rutas /api inexistentes → 404 en JSON
 app.use('/api', (_req, res) => {
@@ -97,6 +100,9 @@ async function iniciar() {
     console.log(`   API: http://localhost:${PORT}/api/health`);
     console.log(`   IA: ${ia.proveedor} (Terra: ${ia.modelos.terra}, Luna: ${ia.modelos.luna})`);
     if (ia.advertencia) console.warn(`   ⚠️  ${ia.advertencia}`);
+    if (!clerkConfigurado()) {
+      console.warn('   ⚠️  Faltan CLERK_PUBLISHABLE_KEY y/o CLERK_SECRET_KEY: el login y la API no funcionarán.');
+    }
     console.log('');
   });
 

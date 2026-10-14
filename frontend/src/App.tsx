@@ -1,9 +1,10 @@
-import { lazy, Suspense, useEffect } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { lazy, Suspense, useEffect, type ReactNode } from 'react';
+import { BrowserRouter, Navigate, Routes, Route } from 'react-router-dom';
 import { ClerkLoading, Show, useAuth } from '@clerk/react';
 import Chat from './pages/Chat';
 import Login from './pages/Login';
 import { configurarToken } from './services/api';
+import { useEsAdmin } from './services/roles';
 import './index.css';
 
 // El dashboard (con Recharts) se carga solo al entrar a /admin
@@ -20,6 +21,11 @@ function TokenDeSesion() {
     configurarToken(() => getToken());
   }, [getToken]);
   return null;
+}
+
+// El panel es solo para administradores; un cliente que entra a /admin vuelve al chat
+function SoloAdmin({ children }: { children: ReactNode }) {
+  return useEsAdmin() ? children : <Navigate to="/" replace />;
 }
 
 function App() {
@@ -39,7 +45,11 @@ function App() {
             <Route path="/" element={<Chat />} />
             <Route
               path="/admin"
-              element={<Suspense fallback={cargando('Cargando panel…')}><Dashboard /></Suspense>}
+              element={
+                <SoloAdmin>
+                  <Suspense fallback={cargando('Cargando panel…')}><Dashboard /></Suspense>
+                </SoloAdmin>
+              }
             />
             <Route path="*" element={<Chat />} />
           </Routes>

@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { UserButton } from "@clerk/react";
 import { enviarMensaje } from "../services/api";
+import { useEsAdmin } from "../services/roles";
 import type { MensajeResponse } from "../services/api";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -469,6 +470,7 @@ function AgentBubble({
 
 export default function Chat() {
   const navigate = useNavigate();
+  const esAdmin = useEsAdmin();
   const [isDark, setIsDark] = useState(true);
   const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);
   const [input, setInput] = useState("");
@@ -675,27 +677,29 @@ export default function Chat() {
               {isDark ? <IconSun /> : <IconMoon />}
             </button>
 
-            {/* Admin Dashboard Link */}
-            <button
-              onClick={() => navigate("/admin")}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "6px",
-                padding: "6px 12px",
-                borderRadius: "8px",
-                background: "rgba(168,85,247,0.12)",
-                border: "1px solid rgba(168,85,247,0.3)",
-                color: "#d8b4fe",
-                fontSize: "12px",
-                fontWeight: 500,
-                cursor: "pointer",
-                transition: "all 0.15s",
-              }}
-            >
-              <IconDashboard size={13} />
-              Dashboard Admin
-            </button>
+            {/* Enlace al panel (solo administradores) */}
+            {esAdmin && (
+              <button
+                onClick={() => navigate("/admin")}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  padding: "6px 12px",
+                  borderRadius: "8px",
+                  background: "rgba(168,85,247,0.12)",
+                  border: "1px solid rgba(168,85,247,0.3)",
+                  color: "#d8b4fe",
+                  fontSize: "12px",
+                  fontWeight: 500,
+                  cursor: "pointer",
+                  transition: "all 0.15s",
+                }}
+              >
+                <IconDashboard size={13} />
+                Dashboard Admin
+              </button>
+            )}
 
             {/* Cuenta del usuario (Clerk): perfil y cerrar sesión */}
             <UserButton />

@@ -84,6 +84,17 @@ Toda la app (chat, panel y simulador) requiere iniciar sesión con [Clerk](https
 
 Todas las rutas `/api` salvo `/api/health` responden `401` sin sesión. La primera vez que alguien escribe en el chat se crea su registro en la tabla `usuario` con el nombre y el email de Clerk, y solo puede continuar sus propias conversaciones.
 
+### Roles: administrador y cliente
+
+Todo usuario que se registra es **cliente**: solo usa el chat. El **administrador** además entra al panel (`/admin`); las rutas `/api` del panel (saldo, alertas, handoffs, modelos, configuración y simulación) responden `403` a los clientes.
+
+Para que el rol funcione, en el panel de Clerk:
+
+1. **Configure → Sessions → Customize session token**: agregar `{ "metadata": "{{user.public_metadata}}" }` para que el rol viaje en el token de sesión.
+2. **Users →** el usuario **→ Metadata → Public**: poner `{ "role": "admin" }`.
+
+El usuario debe cerrar sesión y volver a entrar para que el token incluya el rol.
+
 ## Cómo ejecutar en local
 
 Requisitos: Node.js 20 o superior y PostgreSQL.
@@ -203,7 +214,7 @@ El texto se normaliza (minúsculas, sin tildes) antes de evaluar los patrones. E
 
 ## Limitaciones conocidas (primera versión)
 
-- No hay roles: cualquier usuario con sesión iniciada puede ver el panel de administración. No usar con datos reales.
+- Los administradores se asignan a mano en Clerk (no hay pantalla para gestionar roles). No usar con datos reales.
 - El router es por reglas (palabras clave); el punto de extensión para un clasificador ML está en `backend/src/services/router.ts`.
 - Los agentes humanos se simulan: el handoff asigna al primer agente disponible, pero no existe una bandeja para que el agente responda.
 - El dashboard está pensado para escritorio; en móviles se ve comprimido.

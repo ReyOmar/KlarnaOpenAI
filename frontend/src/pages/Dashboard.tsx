@@ -1247,7 +1247,7 @@ export default function Dashboard() {
                   </div>
                   <div style={{ fontSize: "12px", color: colors.textSec, lineHeight: 1.5 }}>
                     El router aplica reglas por palabras clave en cascada: primero decide si escala a un humano (disputas, fraude, cargos no reconocidos, cuenta bloqueada, temas legales o cuando el cliente lo pide) y, si no, elige Terra o Luna. El usuario nunca ve qué modelo respondió.
-                    {operacion && ` En el escenario base del informe cada conversación de IA cuesta en promedio ${formatUsd(operacion.costoPorConversacionIA)} y la operación consume ${formatUsd(operacion.consumoDiario)} al día; sin enrutador (todo a Terra) el saldo se agota el día 42.`}
+                    {operacion && ` En el escenario base, cada conversación de IA cuesta en promedio ${formatUsd(operacion.costoPorConversacionIA)} y la operación consume ${formatUsd(operacion.consumoDiario)} al día; sin enrutador (todo a Terra) el saldo se agota el día 42.`}
                   </div>
                 </div>
               </div>
